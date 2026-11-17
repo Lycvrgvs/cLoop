@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-// cLoop turn hook — Claude Code editions (main and claude branches).
-// UserPromptSubmit -> heartbeat (turn reminder). SessionStart(source=compact) -> short recovery reminder.
-// Claude Code re-reads project-root CLAUDE.md after compaction, so the full block is never injected.
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-const MAX_FIELD = 10000; // Claude Code caps each injected field at 10,000 characters.
+const START_MARKER = "<!-- cloop:managed:start -->";
+const END_MARKER = "<!-- cloop:managed:end -->";
 
 async function readStdin() {
   const chunks = [];
@@ -30,50 +28,69 @@ function findProjectRoot(start) {
   }
 }
 
-function promptId(event) {
+function extractManagedBlock(source) {
+  if (typeof source !== "string") return null;
+  const startCount = source.split(START_MARKER).length - 1;
+  const endCount = source.split(END_MARKER).length - 1;
+  if (startCount !== 1 || endCount !== 1) return null;
+  const start = source.indexOf(START_MARKER);
+  const end = source.indexOf(END_MARKER);
+  if (start < 0 || end < start) return null;
+  return source.slice(start, end + END_MARKER.length);
+}
+
+function turnId(event) {
   if (!event || typeof event !== "object") return "";
-  const value = event.prompt_id ?? event.promptId ?? event.session_id ?? event.sessionId;
+  const value = event.turn_id ?? event.turnId;
   return value == null ? "" : String(value);
 }
 
 function heartbeatContext(state, event) {
   const sha = String(state.managedBlockSha256 || "").slice(0, 16);
-  const id = promptId(event) || "unknown";
-  const file = state.instructionFile || "CLAUDE.md";
+  const model = event && event.model ? String(event.model) : "";
+  const id = turnId(event) || "unknown";
   const lines = [
-    `cLoop heartbeat: the cLoop hook ran for prompt_id=${id}. Active profile=${state.profile}; preferred root=${state.root}; council=${state.council}; explorer=${state.explorer}; block sha=${sha}. The cLoop orchestration policy in ${file} applies to this turn; if it is not in context, re-read the managed block from ${file} before planning, delegation, or implementation. This heartbeat is direct evidence that the hook ran for this prompt.`,
+    `CLOOP HEARTBEAT: hook executed for current turn_id=${id}. CLOOP ACTIVE: profile=${state.profile} preferred_root="${state.root}" council="${state.council}" explorer="${state.explorer}" sha=${sha}. Apply the repository cLoop orchestration policy to this turn. If the current managed block is unavailable in active context, recover it from AGENTS.md before planning, delegation, or implementation. If asked whether the cLoop hook executed for this turn, this heartbeat is direct runtime evidence. Confirm it without falling back to "I cannot verify whether Codex ran the hook."`,
     state.planningMode,
     "Default this turn: state the route line first (DIRECT / FOCUSED / FULL) unless the user overrode; FOCUSED and FULL start with DEFINE when this task has no frozen rubric; if cloop/board.md exists for this task, continue from its Next line.",
   ];
-  if (event && event.model) {
-    lines.push(`Harness model: ${event.model}. Preferred profile root: ${state.root}. The harness model identity is authoritative and the profile root is advisory; continue with the current root and do not request substitute-root approval because the labels differ.`);
+  if (model) {
+    lines.push(
+      `Harness model slug: ${model}. Preferred profile root: ${state.root}. The harness/system model identity is authoritative; the profile root is advisory. Continue with the current root and do not request substitute-root approval solely because the labels differ.`
+    );
   }
   return lines.filter(Boolean).join("\n");
 }
 
-function recoveryContext(state) {
-  const file = state.instructionFile || "CLAUDE.md";
-  return [
-    `cLoop recovery: SessionStart source=compact. The cLoop managed block in ${file} is authoritative; Claude Code reloads it after compaction, and if it is absent from context, re-read it from ${file} before planning, delegation, or implementation. Reread cloop/board.md if present.`,
+function recoveryContext(state, block) {
+  const parts = [
+    "CLOOP RECOVERY: SessionStart source=compact succeeded. Rehydrate and follow this exact managed cLoop policy before planning, delegation, or implementation.",
+    block,
     state.planningMode,
     "Default after recovery: continue from the Next line of cloop/board.md; if the current task has no board, state the route line first and start with DEFINE for FOCUSED or FULL.",
-  ].filter(Boolean).join("\n\n");
+  ];
+  return parts.filter(Boolean).join("\n\n");
 }
 
 function emit(payload) {
   process.stdout.write(JSON.stringify(payload));
 }
 
-function failSafe(message) {
-  emit({ continue: true, systemMessage: message });
+function emitContext(hookEventName, additionalContext) {
+  emit({
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName,
+      additionalContext,
+    },
+  });
 }
 
-function emitContext(hookEventName, additionalContext) {
-  if (additionalContext.length > MAX_FIELD) {
-    failSafe(`cLoop hook: ${hookEventName} context is ${additionalContext.length} chars, over the ${MAX_FIELD}-char limit; run \`node install.mjs doctor --project .\`.`);
-    return;
-  }
-  emit({ continue: true, hookSpecificOutput: { hookEventName, additionalContext } });
+function failSafe(message) {
+  emit({
+    continue: true,
+    systemMessage: message,
+  });
 }
 
 async function main() {
@@ -82,28 +99,47 @@ async function main() {
     failSafe("cLoop hook: malformed hook stdin; continuing without injected context.");
     return;
   }
-  const root = findProjectRoot(event.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd());
+
+  const root = findProjectRoot(event.cwd || process.cwd());
   if (!root) {
-    failSafe("cLoop hook: no .cloop/state.json found from session cwd; CLAUDE.md policy remains authoritative.");
+    failSafe("cLoop hook: no .cloop/state.json found from session cwd; AGENTS.md policy remains authoritative.");
     return;
   }
+
   let state;
   try {
-    state = JSON.parse(await readFile(path.join(root, ".cloop", "state.json"), "utf8"));
+    state = JSON.parse(
+      await readFile(path.join(root, ".cloop", "state.json"), "utf8")
+    );
   } catch {
     failSafe("cLoop hook: unreadable .cloop/state.json; continuing without injected context.");
     return;
   }
+
   const eventName = event.hook_event_name || event.hookEventName || "";
-  const source = event.source || "";
-  if (eventName === "SessionStart") {
-    if (source !== "compact") {
-      emit({ continue: true });
-      return;
-    }
-    emitContext("SessionStart", recoveryContext(state));
+  const source = event.source || event.session_source || "";
+
+  if (eventName === "SessionStart" && source !== "compact") {
+    emit({ continue: true });
     return;
   }
+
+  if (eventName === "SessionStart" || source === "compact") {
+    const instructionFile = path.join(root, state.instructionFile || "AGENTS.md");
+    let block = null;
+    try {
+      block = extractManagedBlock(await readFile(instructionFile, "utf8"));
+    } catch {
+      block = null;
+    }
+    if (!block) {
+      failSafe("cLoop recovery: managed AGENTS.md block missing or malformed; run `node install.mjs doctor --project .`.");
+      return;
+    }
+    emitContext("SessionStart", recoveryContext(state, block));
+    return;
+  }
+
   emitContext("UserPromptSubmit", heartbeatContext(state, event));
 }
 

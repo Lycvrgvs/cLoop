@@ -1,10 +1,10 @@
-# cLoop — Claude Code + Codex CLI
+# cLoop — Codex edition
 
 **cLoop** is a council loop for coding agents. The *c* stands for **council**: cLoop is short for *council-Loop*, and everywhere else it is simply cLoop.
 
 You state the goal. A council of two independent models turns it into a rubric of single-property criteria, tagged CORE or NON-CORE. The root builds one self-contained one-shot, runs it on real input, and then closes the remaining gaps in small loops. Each loop corrects one thing and is judged by the council against the frozen rubric on a frozen commit. When a problem resists repair, the same two models switch roles: they become duelers, each diagnosing apart and fixing in its own worktree, and the root merges the result by an objective rule. Nothing counts as done until the release gate passes: the full product on a real run, the full suite once, and a full review.
 
-This `main` branch runs the root in **Claude Code**. Member A is a native Claude Code subagent; Member B and the explorers are **Codex CLI** sessions (`codex exec`) that the root launches directly. Two labs on one council, so their findings complement each other.
+This `codex` branch runs everything in **Codex**: the root is a Codex session and every member and explorer is a native Codex subagent (`spawn_agent` with an explicit model and reasoning effort).
 
 ## Why cLoop
 
@@ -33,10 +33,12 @@ Outcomes are REGRESSION, PASS, ADVANCED, STALLED or BLOCKED. After every check, 
 
 | Profile | Council | Root (recommended) | Member A | Member B | Explorer | Account |
 | --- | --- | --- | --- | --- | --- | --- |
-| `town` | Town Council | Opus 5.5 medium | Opus 5.5 medium | `gpt-6.1-terra` max | `gpt-6.1-terra` medium | Claude Max + ChatGPT Plus |
-| `high` | High Council | Opus 5.5 high | Opus 5.5 xhigh | `gpt-6.1-sol` max | `gpt-6.1-sol` medium | Claude Max + ChatGPT Pro |
+| `town` | Town Council | `gpt-6.1-sol` medium | `gpt-6.1-terra` max | `gpt-6.1-sol` medium | `gpt-6.1-terra` medium | ChatGPT Plus |
+| `high` | High Council | `gpt-6.1-sol` high | `gpt-6.1-sol` max | `gpt-6-astra` xhigh | `gpt-6.1-sol` medium | ChatGPT Pro |
 
 Install **exactly one** profile per project. Member A and Member B judge every loop and every gate, and duel when a problem resists repair.
+
+Both members come from the same lab on this branch, so every review names the nearest counterfeit (what could look like the property without being it) with extra care.
 
 ## Editions
 
@@ -61,8 +63,8 @@ If a human asked you to install cLoop into the **current** project:
 node /path/to/cLoop/install.mjs install --project . --profile town
 ```
 
-5. Do not paste profile text into `CLAUDE.md` yourself, and do not install more than one profile.
-6. After install or update, tell the human to open the project in Claude Code, accept the workspace trust dialog, review `/hooks`, and set the root model with `/model` (`town`: Opus 5.5 medium; `high`: Opus 5.5 high).
+5. Do not paste profile text into `AGENTS.md` yourself, and do not install more than one profile.
+6. After install or update, tell the human to trust the project in Codex, review `/hooks`, and switch the root model (`town`: `gpt-6.1-sol` medium; `high`: `gpt-6.1-sol` high).
 
 ## Install / update / doctor / uninstall
 
@@ -73,24 +75,24 @@ node /path/to/cLoop/install.mjs doctor --project .
 node /path/to/cLoop/install.mjs uninstall --project .
 ```
 
-Flags: `--dry-run`, `--force` (overwrite a hand-edited cLoop block), `--json`, `--no-hooks`, `--hooks` (default). `--global` is rejected. Profile aliases: `town-council`, `high-council`.
+Flags: `--dry-run`, `--force` (overwrite a hand-edited cLoop block), `--json`, `--no-hooks`, `--hooks` (default), `--agents-md-limit 96k|default`. `--global` is rejected. Profile aliases: `town-council`, `high-council`.
 
 **Requirements:**
-- Node 18+ and Claude Code.
-- `codex` on `PATH` and logged in (Member B and the explorers run through it).
-- The installer adds `Bash(codex exec:*)` to `.claude/settings.json` permissions; uninstall removes it.
-- `AGENTS.md` must not hold a cLoop block, because Codex sessions would load it as their own policy. `doctor` reports it if it does.
+- Node 18+ and Codex.
+- The installer enables native multi-agent in `.codex/config.toml` (`[features.multi_agent_v2]`, with model overrides and a 30-minute wait).
+- The cLoop policy is about 37 KB, over Codex's 32 KiB `AGENTS.md` default, so `install` also sets `project_doc_max_bytes = 98304` in its own marked block. Pass `--agents-md-limit default` to opt out; a key you already own is never overwritten, and `doctor` warns if the file is too large for the limit.
 
 ## What it writes
 
 ```text
-CLAUDE.md                        # bounded cLoop block appended or replaced
+AGENTS.md                        # bounded cLoop block appended or replaced
 .cloop/state.json                # profile, hashes, hook mode
-.claude/settings.json            # cLoop hook entries and the codex exec permission; other keys kept
-.claude/hooks/cloop-turn.mjs     # heartbeat (UserPromptSubmit) + short compact reminder (SessionStart: compact)
+.codex/config.toml               # multi-agent block and the AGENTS.md limit block; other keys kept
+.codex/hooks.json                # cLoop hook entries merged; other hooks kept
+.codex/hooks/cloop-turn.mjs      # heartbeat (UserPromptSubmit) + compact recovery (SessionStart: compact)
 ```
 
-Claude Code re-reads the project-root `CLAUDE.md` after compaction, so the compact hook injects only the turn reminder, never the whole block. Everything outside the `<!-- cloop:managed:start -->` / `<!-- cloop:managed:end -->` markers stays yours; `uninstall` removes only cLoop files.
+After compaction, the recovery hook re-injects the whole managed block, so the root never works from a summary of its own policy. Everything outside the `<!-- cloop:managed:start -->` / `<!-- cloop:managed:end -->` markers stays yours; `uninstall` removes only cLoop files.
 
 While a task runs, the root keeps `cloop/board.md` (the board), `cloop/runs/` and `cloop/wt/` (call folders and worktrees) and `temporary/`. All are git-excluded and deleted when the task passes; on BLOCKED the board stays until a solution is found. Three files are permanent and committed: `cloop/rubric.md`, `cloop/spec.md` and `cloop/architecture.md`.
 
@@ -119,10 +121,11 @@ The tool derives both profiles for this branch's edition from the Town Council s
 
 ```text
 install.mjs              zero-dependency installer
+codex-config.mjs         .codex/config.toml merge (multi-agent and AGENTS.md limit)
 profiles/town.md         Town Council policy (generated)
 profiles/high.md         High Council policy (generated)
 profiles/catalog.json    profile metadata and turn reminders (generated)
-hooks/cloop-turn.mjs     copied into each target project's .claude/hooks/
+hooks/cloop-turn.mjs     copied into each target project's .codex/hooks/
 tools/release.mjs        profile generator for releases
 test/installer.test.mjs
 ```
