@@ -1,10 +1,10 @@
-# cLoop — Claude Code + Codex CLI
+# cLoop — Claude Code edition
 
 **cLoop** is a council loop for coding agents. The *c* stands for **council**: cLoop is short for *council-Loop*, and everywhere else it is simply cLoop.
 
 You state the goal. A council of two independent models turns it into a rubric of single-property criteria, tagged CORE or NON-CORE. The root builds one self-contained one-shot, runs it on real input, and then closes the remaining gaps in small loops. Each loop corrects one thing and is judged by the council against the frozen rubric on a frozen commit. When a problem resists repair, the same two models switch roles: they become duelers, each diagnosing apart and fixing in its own worktree, and the root merges the result by an objective rule. Nothing counts as done until the release gate passes: the full product on a real run, the full suite once, and a full review.
 
-This `main` branch runs the root in **Claude Code**. Member A is a native Claude Code subagent; Member B and the explorers are **Codex CLI** sessions (`codex exec`) that the root launches directly. Two labs on one council, so their findings complement each other.
+This `claude` branch runs everything in **Claude Code**: the root is a Claude Code session and every member and explorer is a native subagent launched with the `Agent` tool and an explicit `model` and `effort`. No Codex needed.
 
 ## Why cLoop
 
@@ -33,10 +33,12 @@ Outcomes are REGRESSION, PASS, ADVANCED, STALLED or BLOCKED. After every check, 
 
 | Profile | Council | Root (recommended) | Member A | Member B | Explorer | Account |
 | --- | --- | --- | --- | --- | --- | --- |
-| `town` | Town Council | Opus 5.5 medium | Opus 5.5 medium | `gpt-6.1-terra` max | `gpt-6.1-terra` medium | Claude Max + ChatGPT Plus |
-| `high` | High Council | Opus 5.5 high | Opus 5.5 xhigh | `gpt-6.1-sol` max | `gpt-6.1-sol` medium | Claude Max + ChatGPT Pro |
+| `town` | Town Council | Opus 5.5 medium | Sonnet 5.5 xhigh | Opus 5.5 medium | Sonnet 5.5 medium | Claude Max |
+| `high` | High Council | Opus 5.5 high | Opus 5.5 xhigh | Fable 5.1 xhigh | Opus 5.5 medium | Claude Max (higher tier) |
 
 Install **exactly one** profile per project. Member A and Member B judge every loop and every gate, and duel when a problem resists repair.
+
+Both members come from the same lab on this branch, so every review names the nearest counterfeit (what could look like the property without being it) with extra care.
 
 ## Editions
 
@@ -77,16 +79,13 @@ Flags: `--dry-run`, `--force` (overwrite a hand-edited cLoop block), `--json`, `
 
 **Requirements:**
 - Node 18+ and Claude Code.
-- `codex` on `PATH` and logged in (Member B and the explorers run through it).
-- The installer adds `Bash(codex exec:*)` to `.claude/settings.json` permissions; uninstall removes it.
-- `AGENTS.md` must not hold a cLoop block, because Codex sessions would load it as their own policy. `doctor` reports it if it does.
 
 ## What it writes
 
 ```text
 CLAUDE.md                        # bounded cLoop block appended or replaced
 .cloop/state.json                # profile, hashes, hook mode
-.claude/settings.json            # cLoop hook entries and the codex exec permission; other keys kept
+.claude/settings.json            # cLoop hook entries merged into "hooks"; other keys kept
 .claude/hooks/cloop-turn.mjs     # heartbeat (UserPromptSubmit) + short compact reminder (SessionStart: compact)
 ```
 

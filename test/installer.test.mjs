@@ -105,7 +105,7 @@ test("install is idempotent and never duplicates the managed block", async () =>
 });
 
 test("each profile installs only that profile's unique root text", async () => {
-  const UNIQUE = {"town":"gpt-6.1-terra max","high":"gpt-6.1-sol max"};
+  const UNIQUE = {"town":"Sonnet 5.5 xhigh","high":"Fable 5.1 xhigh"};
   for (const [profile, other] of [["town", "high"], ["high", "town"]]) {
     const dir = await tempDir();
     try {
@@ -122,7 +122,7 @@ test("each profile installs only that profile's unique root text", async () => {
 });
 
 test("update replaces only cLoop-owned content and can switch profiles", async () => {
-  const UNIQUE = {"town":"gpt-6.1-terra max","high":"gpt-6.1-sol max"};
+  const UNIQUE = {"town":"Sonnet 5.5 xhigh","high":"Fable 5.1 xhigh"};
   const dir = await tempDir();
   try {
     await writeFile(path.join(dir, "CLAUDE.md"), "Keep me.\n");
@@ -411,7 +411,7 @@ test("profiles keep the cLoop structure and carry no harness setup text", async 
 
 test("catalog carries one turn reminder per profile and no full modes", async () => {
   const catalog = JSON.parse(await readFile(path.join(ROOT, "profiles", "catalog.json"), "utf8"));
-  assert.equal(catalog.edition, "main");
+  assert.equal(catalog.edition, "claude");
   assert.deepEqual(Object.keys(catalog.profiles), ["town", "high"]);
   for (const id of ["town", "high"]) {
     const meta = catalog.profiles[id];
@@ -422,11 +422,11 @@ test("catalog carries one turn reminder per profile and no full modes", async ()
   }
 });
 
-test("main profiles run Member A natively and Member B and explorers through codex exec", async () => {
+test("claude profiles route only Claude models through the native Agent tool", async () => {
   for (const id of ["town", "high"]) {
     const text = await readFile(path.join(ROOT, "profiles", `${id}.md`), "utf8");
-    for (const need of [/a Claude Code session/, /from different labs/, /native Claude Code subagent/, /codex exec -m gpt-6\.1-(terra|sol) -c model_reasoning_effort=max -s read-only/, /P1: Codex runs and is logged in/]) assert.match(text, need);
-    for (const bad of [/spawn_agent/, /wait_agent/, /AGENTS\.md/]) assert.doesNotMatch(text, bad);
+    for (const need of [/a Claude Code session/, /native `Agent` tool/, /native Claude Code subagent/, /same lab/]) assert.match(text, need);
+    for (const bad of [/gpt-6/, /[Cc]odex/, /spawn_agent/, /wait_agent/, /AGENTS\.md/, /different labs/]) assert.doesNotMatch(text, bad);
   }
 });
 
@@ -463,20 +463,6 @@ test("settings.json merge preserves unrelated keys and hooks", async () => {
     const after = JSON.parse(await readFile(path.join(dir, ".claude", "settings.json"), "utf8"));
     assert.equal(after.model, "opus");
     assert.equal(after.hooks?.UserPromptSubmit, undefined);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("main install adds the codex permission and uninstall removes it", async () => {
-  const dir = await tempDir();
-  try {
-    await cli(dir, ["install", "--profile", "town"]);
-    const s = JSON.parse(await readFile(path.join(dir, ".claude", "settings.json"), "utf8"));
-    assert.ok(s.permissions.allow.includes("Bash(codex exec:*)"));
-    await cli(dir, ["uninstall"]);
-    const raw = await readFile(path.join(dir, ".claude", "settings.json"), "utf8").catch(() => "{}");
-    assert.ok(!raw.includes("codex exec"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -512,8 +512,8 @@ Usage:
   node install.mjs uninstall --project .
 
 Profiles:
-  town   Town Council   root=Opus 5.5 medium; council=Opus 5.5 medium + gpt-6.1-terra max (codex exec)
-  high   High Council   root=Opus 5.5 high; council=Opus 5.5 xhigh + gpt-6.1-sol max (codex exec)
+  town   Town Council   root=Opus 5.5 medium; council=Sonnet 5.5 xhigh + Opus 5.5 medium
+  high   High Council   root=Opus 5.5 high; council=Opus 5.5 xhigh + Fable 5.1 xhigh
 
 Options:
   --project <dir>     Target repository (default: cwd)
