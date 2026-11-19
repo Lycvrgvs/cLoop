@@ -213,7 +213,13 @@ export function mergeMultiAgentConfig(existingText) {
     };
   }
 
-  const userKeys = collectKeys(lines, table.start + 1, table.end, true);
+  // Keys inside cLoop's own marker block are managed, even when the block also holds the table header.
+  const userKeys = new Map();
+  for (let i = table.start + 1; i < table.end; i += 1) {
+    if (markers && i >= markers.start && i <= markers.end) continue;
+    const parsed = parseAssignment(lines[i]);
+    if (parsed) userKeys.set(parsed.key, parsed);
+  }
   const missing = [];
   for (const key of REQUIRED_KEYS) {
     if (!userKeys.has(key)) {
@@ -228,7 +234,11 @@ export function mergeMultiAgentConfig(existingText) {
     }
   }
 
-  const managedLines = missing.length ? [TOML_START, ...managedKeyLines(missing), TOML_END] : [];
+  // When cLoop created the table, its marker block holds the table header too: keep it on rewrite.
+  const ownsHeader = Boolean(markers && markers.start < table.start && table.start < markers.end);
+  const managedLines = missing.length
+    ? [TOML_START, ...(ownsHeader ? [TABLE_HEADER] : []), ...managedKeyLines(missing), TOML_END]
+    : [];
 
   if (!markers && missing.length === 0) {
     return {

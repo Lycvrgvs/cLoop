@@ -50,9 +50,9 @@ function heartbeatContext(state, event) {
   const model = event && event.model ? String(event.model) : "";
   const id = turnId(event) || "unknown";
   const lines = [
-    `CLOOP HEARTBEAT: hook executed for current turn_id=${id}. CLOOP ACTIVE: profile=${state.profile} preferred_root="${state.root}" council="${state.council}" explorer="${state.explorer}" sha=${sha}. Apply the repository cLoop orchestration policy to this turn. If the current managed block is unavailable in active context, recover it from AGENTS.md before planning, delegation, or implementation. If asked whether the cLoop hook executed for this turn, this heartbeat is direct runtime evidence. Confirm it without falling back to "I cannot verify whether Codex ran the hook."`,
+    `CLOOP HEARTBEAT: hook executed for current turn_id=${id}. CLOOP ACTIVE: profile=${state.profile} preferred_root="${state.root}" council="${state.council}" explorer="${state.explorer}" builders="${state.builders || "none"}" sha=${sha}. Apply the repository cLoop orchestration policy to this turn. If the current managed block is unavailable in active context, recover it from AGENTS.md before planning, delegation, or implementation. If asked whether the cLoop hook executed for this turn, this heartbeat is direct runtime evidence. Confirm it without falling back to "I cannot verify whether Codex ran the hook."`,
     state.planningMode,
-    "Default this turn: state the route line first (DIRECT / FOCUSED / FULL) unless the user overrode; FOCUSED and FULL start with DEFINE when this task has no frozen rubric; if cloop/board.md exists for this task, continue from its Next line.",
+    "Default this turn: state the route line first (DIRECT / FOCUSED / FULL) unless the user overrode; FOCUSED and FULL start with DEFINE when this task has no frozen rubric; if cloop/board.md exists for this task, continue from its Next line. After every outcome except PASS, take a step back and record it as one board line before the next loop.",
   ];
   if (model) {
     lines.push(
@@ -67,7 +67,7 @@ function recoveryContext(state, block) {
     "CLOOP RECOVERY: SessionStart source=compact succeeded. Rehydrate and follow this exact managed cLoop policy before planning, delegation, or implementation.",
     block,
     state.planningMode,
-    "Default after recovery: continue from the Next line of cloop/board.md; if the current task has no board, state the route line first and start with DEFINE for FOCUSED or FULL.",
+    "Default after recovery: continue from the Next line of cloop/board.md; if the current task has no board, state the route line first and start with DEFINE for FOCUSED or FULL. After every outcome except PASS, take a step back and record it as one board line before the next loop.",
   ];
   return parts.filter(Boolean).join("\n\n");
 }

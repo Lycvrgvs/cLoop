@@ -15,6 +15,7 @@ import {
   cloopHookCount,
   extractManagedRegion,
   extractProfileFromBlock,
+  G0_LINES,
   loadProfile,
   mergeCloopHooks,
   run,
@@ -406,11 +407,11 @@ test("profiles keep the cLoop structure and carry no harness setup text", async 
   for (const id of ["town", "high"]) {
     const text = await readFile(path.join(ROOT, "profiles", `${id}.md`), "utf8");
     assert.match(text, new RegExp(`^PROFILE: ${id}\nISSUE_REPO: Lycvrgvs/cLoop\n`));
-    for (const need of [/the c stands for council/, /## VOCABULARY/, /## LAWS/, /## NOISE_VETO/, /## SIGNALS/, /## FLOW/, /### DEFINE/, /### EXPLORE/, /### CLIMB/, /## MECHANICS/, /### ONE-SHOT/, /### SMALL LOOP/, /### GATES/, /### OUTCOMES/, /### STEP BACK/, /### DUEL/, /## RUBRIC/, /## JUDGING/, /## ROLES AND INVOCATION/, /## FILES/, /## REPORTING/]) assert.match(text, need);
+    for (const need of [/the c stands for council/, /## VOCABULARY/, /## LAWS/, /## NOISE_VETO/, /## SIGNALS/, /## FLOW/, /### DEFINE/, /### EXPLORE/, /### CLIMB/, /## MECHANICS/, /### ONE-SHOT/, /### SMALL LOOP/, /### GATES/, /### OUTCOMES/, /### STEP BACK/, /### DUEL/, /## RUBRIC/, /## JUDGING/, /## ROLES AND INVOCATION/, /## BUILDERS/, /## FILES/, /## REPORTING/]) assert.match(text, need);
     for (const bad of [/^# MAIN PROMPT/m, /^# TURN REMINDER/m, /^# TEST PLAN/m, /═══/]) assert.doesNotMatch(text, bad);
   }
   const { readdir } = await import("node:fs/promises");
-  assert.deepEqual((await readdir(path.join(ROOT, "profiles"))).sort(), ["catalog.json", "high.md", "town.md"]);
+  assert.deepEqual((await readdir(path.join(ROOT, "profiles"))).sort(), ["catalog.json", "high.cheap-100.md", "high.cheap.md", "high.md", "town.cheap-100.md", "town.cheap.md", "town.md"]);
 });
 
 test("catalog carries one turn reminder per profile and no full modes", async () => {
@@ -423,7 +424,13 @@ test("catalog carries one turn reminder per profile and no full modes", async ()
     assert.equal(meta.implementationMode, "");
     assert.ok(meta.planningMode.length < 4000);
     assert.match(meta.council, / \+ /);
+    for (const b of ["cheap", "cheap-100"]) {
+      assert.equal(meta.builders[b].file, `${id}.${b}.md`);
+      assert.ok(existsSync(path.join(ROOT, "profiles", meta.builders[b].file)));
+    }
   }
+  assert.equal(catalog.buildersSource.package, "cheapGPT");
+  assert.equal(catalog.buildersSource.edition, "main");
 });
 
 test("codex profiles route every role through native subagents and only high uses Astra", async () => {
@@ -628,5 +635,133 @@ test("install sets the 96 KiB AGENTS.md limit by default, respects a user-owned 
   } finally {
     await rm(dir, { recursive: true, force: true });
     await rm(owned, { recursive: true, force: true });
+  }
+});
+
+
+test("--builders installs the builder variant, update keeps it, and none removes it", async () => {
+  const dir = await tempDir();
+  try {
+    await cli(dir, ["install", "--profile", "town", "--builders", "cheap"]);
+    let text = await readFile(path.join(dir, "AGENTS.md"), "utf8");
+    assert.match(text, /\*\*Builders\*\* \(`--builders cheap`/);
+    assert.match(text, /Active profile: `town` · builders: `cheap`/);
+    let state = JSON.parse(await readFile(path.join(dir, ".cloop", "state.json"), "utf8"));
+    assert.equal(state.builders, "cheap");
+    assert.equal(state.buildersSource.package, "cheapGPT");
+    assert.equal((await cli(dir, ["doctor"])).ok, true);
+    await cli(dir, ["update"]);
+    state = JSON.parse(await readFile(path.join(dir, ".cloop", "state.json"), "utf8"));
+    assert.equal(state.builders, "cheap");
+    await cli(dir, ["update", "--builders", "cheap-100"]);
+    text = await readFile(path.join(dir, "AGENTS.md"), "utf8");
+    assert.match(text, /\*\*Builders\*\* \(`--builders cheap-100`/);
+    await cli(dir, ["update", "--builders", "none"]);
+    text = await readFile(path.join(dir, "AGENTS.md"), "utf8");
+    assert.doesNotMatch(text, /\*\*Builders\*\* \(/);
+    assert.equal((await cli(dir, ["doctor"])).ok, true);
+    await assert.rejects(() => cli(dir, ["update", "--builders", "ultracheap"]), /--builders takes none, cheap or cheap-100/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("builder profiles are the plain profiles plus one Builders block from the vendored rows", async () => {
+  const vendor = JSON.parse(await readFile(path.join(ROOT, "vendor", "cheapgpt-builders.json"), "utf8"));
+  assert.equal(vendor.source.edition, "main");
+  assert.match(vendor.source.commit, /^[0-9a-f]{40}$/);
+  for (const id of ["town", "high"]) {
+    const plain = await readFile(path.join(ROOT, "profiles", `${id}.md`), "utf8");
+    assert.doesNotMatch(plain, /\*\*Builders\*\* \(/);
+    for (const b of ["cheap", "cheap-100"]) {
+      const text = await readFile(path.join(ROOT, "profiles", `${id}.${b}.md`), "utf8");
+      const start = text.indexOf("\n**Builders** (");
+      const end = text.indexOf("\n## BUILDERS\n");
+      assert.ok(start > 0 && end > start);
+      assert.equal(text.slice(0, start) + text.slice(end), plain);
+      const block = text.slice(start, end);
+      for (const kind of ["dynamic", "mechanical"]) {
+        assert.ok(block.includes(`${vendor.profiles[b][kind].model} ${vendor.profiles[b][kind].effort}`), `${id}.${b} lacks the ${kind} row`);
+      }
+    }
+  }
+});
+
+test("install and update stop before writing when cheapGPT is installed", async () => {
+  const dir = await tempDir();
+  const other = await tempDir();
+  try {
+    await mkdir(path.join(dir, ".cheapgpt"), { recursive: true });
+    await writeFile(path.join(dir, ".cheapgpt", "state.json"), JSON.stringify({ profile: "cheap", instructionFile: "AGENTS.md", codexPermission: false }));
+    await assert.rejects(() => cli(dir, ["install", "--profile", "town"]), /cheapGPT is installed in this project[\s\S]*--builders cheap/);
+    assert.equal(existsSync(path.join(dir, ".cloop")), false);
+    assert.equal(existsSync(path.join(dir, "AGENTS.md")), false);
+    await cli(other, ["install", "--profile", "town"]);
+    const before = await readFile(path.join(other, "AGENTS.md"), "utf8");
+    await writeFile(path.join(other, "AGENTS.md"), `${before}\n<!-- cheapgpt:managed:start -->\nx\n<!-- cheapgpt:managed:end -->\n`);
+    await assert.rejects(() => cli(other, ["update"]), /cheapGPT is installed in this project/);
+    const doctor = await cli(other, ["doctor"]);
+    assert.ok(doctor.issues.some((issue) => /cheapGPT is installed here too/.test(issue)));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(other, { recursive: true, force: true });
+  }
+});
+
+test("first install recommends an ADOPTION task until a rubric exists", async () => {
+  const dir = await tempDir();
+  const adopted = await tempDir();
+  try {
+    const result = await cli(dir, ["install", "--profile", "town"]);
+    assert.match(result.notes[0], /ADOPTION/);
+    assert.equal((await cli(dir, ["update"])).notes, undefined);
+    await mkdir(path.join(adopted, "cloop"), { recursive: true });
+    await writeFile(path.join(adopted, "cloop", "rubric.md"), `${G0_LINES.join("\n")}\n`);
+    assert.equal((await cli(adopted, ["install", "--profile", "town"])).notes, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(adopted, { recursive: true, force: true });
+  }
+});
+
+test("doctor warns when cloop/rubric.md lacks the G0 Method block verbatim", async () => {
+  const dir = await tempDir();
+  try {
+    await cli(dir, ["install", "--profile", "town"]);
+    await mkdir(path.join(dir, "cloop"), { recursive: true });
+    await writeFile(path.join(dir, "cloop", "rubric.md"), "# Rubric\n\n- C1 | CORE | something\n");
+    let doctor = await cli(dir, ["doctor"]);
+    assert.ok(doctor.warnings.some((w) => /G0 Method/.test(w)));
+    await writeFile(path.join(dir, "cloop", "rubric.md"), `# Rubric\n\n${G0_LINES.join("\n")}\n\n- C1 | CORE | something\n`);
+    doctor = await cli(dir, ["doctor"]);
+    assert.ok(!doctor.warnings.some((w) => /G0 Method/.test(w)));
+    const profile = await readFile(path.join(ROOT, "profiles", "town.md"), "utf8");
+    for (const line of G0_LINES) assert.ok(profile.includes(line), `the policy lacks: ${line}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the turn hook asks for a step back after every outcome except PASS", async () => {
+  const hook = await readFile(HOOK, "utf8");
+  assert.equal(hook.split("After every outcome except PASS, take a step back").length - 1, 2);
+  assert.doesNotMatch(hook, /coexist|cheapGPT keeps/);
+  const block = buildManagedBlock("town", "body");
+  assert.doesNotMatch(block, /cheapGPT/);
+});
+
+test("repeated updates keep the multi-agent table that install created", async () => {
+  const dir = await tempDir();
+  try {
+    await cli(dir, ["install", "--profile", "town"]);
+    for (let i = 0; i < 3; i += 1) {
+      await cli(dir, ["update"]);
+      const text = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
+      assert.equal(text.split("[features.multi_agent_v2]").length - 1, 1, `update ${i + 1} lost or duplicated the table`);
+      assert.match(text, /expose_spawn_agent_model_overrides = true/);
+      assert.equal((await cli(dir, ["doctor"])).ok, true);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
