@@ -68,6 +68,8 @@ node /path/to/cLoop/install.mjs install --project . --profile town
 
 ## Install / update / doctor / uninstall
 
+On a first install, the installer recommends making the first task an ADOPTION when the project has no `cloop/rubric.md` yet, so the rubric (opening with the G0 Method goal), the spec and the architecture exist before feature work. `doctor` checks that the rubric carries G0 verbatim.
+
 ```bash
 node /path/to/cLoop/install.mjs install --project . --profile town
 node /path/to/cLoop/install.mjs update --project . [--profile high]
@@ -75,7 +77,7 @@ node /path/to/cLoop/install.mjs doctor --project .
 node /path/to/cLoop/install.mjs uninstall --project .
 ```
 
-Flags: `--dry-run`, `--force` (overwrite a hand-edited cLoop block), `--json`, `--no-hooks`, `--hooks` (default). `--global` is rejected. Profile aliases: `town-council`, `high-council`.
+Flags: `--dry-run`, `--force` (overwrite a hand-edited cLoop block), `--json`, `--no-hooks`, `--hooks` (default), `--builders none|cheap|cheap-100`. `--global` is rejected. Profile aliases: `town-council`, `high-council`.
 
 **Requirements:**
 - Node 18+ and Claude Code.
@@ -93,9 +95,24 @@ Claude Code re-reads the project-root `CLAUDE.md` after compaction, so the compa
 
 While a task runs, the root keeps `cloop/board.md` (the board), `cloop/runs/` and `cloop/wt/` (call folders and worktrees) and `temporary/`. All are git-excluded and deleted when the task passes; on BLOCKED the board stays until a solution is found. Three files are permanent and committed: `cloop/rubric.md`, `cloop/spec.md` and `cloop/architecture.md`.
 
-## Using cLoop next to cheapGPT
+## cheapGPT builders (`--builders`)
 
-cLoop is a sibling of [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) and can share a project with it: each owns its own marked block. When both are installed, cLoop governs every phase, check, gate and judgment. cheapGPT keeps only how the root works: delegating implementation to its implementers and keeping its CavePrompt board. Those implementers follow cLoop's explorer rules: their own worktree and a self-contained packet.
+cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed in the same project. To get cheapGPT's economical builders, install cLoop with `--builders cheap` or `--builders cheap-100`. The builders then take only the build steps (each one-shot file and each small loop's BUILD), run as native Claude Code subagents in their own worktrees. The root keeps everything else, and the council never changes. Pick the builders separately from `town` or `high`.
+
+| Option | Dynamic builder | Mechanical builder |
+| --- | --- | --- |
+| `--builders none` (default) | the root builds | the root builds |
+| `--builders cheap` | Sonnet 5.5 medium | Haiku 5.5 xhigh |
+| `--builders cheap-100` | Sonnet 5.5 xhigh | Haiku 5.5 xhigh |
+
+The rows come from cheapGPT 1.8.4's published `profiles/roles.json` (the `claude-edition` edition), copied into `vendor/cheapgpt-builders.json` at release time. Nothing is fetched at install.
+
+```bash
+node /path/to/cLoop/install.mjs install --project . --profile town --builders cheap
+node /path/to/cLoop/install.mjs update --project . --builders none   # back to root-built steps
+```
+
+`update` keeps the recorded value until you pass another one. When cheapGPT is installed, `install` and `update` stop before writing anything and print the commands to keep one package. To move a cheapGPT project to cLoop, uninstall cheapGPT with its own installer first, then install cLoop with the matching `--builders` value.
 
 ## Tests
 
@@ -108,11 +125,12 @@ node --test test/installer.test.mjs
 Profiles are generated, never edited by hand. To release a new prompt, on each branch run:
 
 ```bash
+node tools/sync-builders.mjs --roles /path/to/cheapGPT/profiles/roles.json --commit <cheapGPT sha>
 node tools/release.mjs --txt /path/to/cloop-town.txt --version X.Y.Z
 node --test test/installer.test.mjs
 ```
 
-The tool derives both profiles for this branch's edition from the Town Council source prompt. It refuses to run if the prompt's roles section or intro no longer match its templates.
+`sync-builders` copies the builder rows from cheapGPT's published roles table, checked out at a pinned commit of the paired edition. `release` then derives the six profiles for this branch's edition (`town`, `high`, each with builders `none`, `cheap` and `cheap-100`) from the Town Council source prompt. It refuses to run if the prompt's roles section or intro no longer match its templates.
 
 ## Layout
 
@@ -120,8 +138,12 @@ The tool derives both profiles for this branch's edition from the Town Council s
 install.mjs              zero-dependency installer
 profiles/town.md         Town Council policy (generated)
 profiles/high.md         High Council policy (generated)
+profiles/*.cheap*.md     the same policies with a Builders block (generated)
 profiles/catalog.json    profile metadata and turn reminders (generated)
 hooks/cloop-turn.mjs     copied into each target project's .claude/hooks/
 tools/release.mjs        profile generator for releases
+tools/sync-builders.mjs  copies cheapGPT's builder rows into vendor/
+vendor/cheapgpt-builders.json  vendored builder rows and their cheapGPT source
+cheapgpt-guard.mjs       stops install and update when cheapGPT is installed
 test/installer.test.mjs
 ```

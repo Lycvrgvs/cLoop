@@ -1,8 +1,14 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.0.0",
+  "packageVersion": "1.0.2",
   "harness": "claude",
   "edition": "claude",
+  "buildersSource": {
+    "package": "cheapGPT",
+    "version": "1.8.4",
+    "edition": "claude-edition",
+    "commit": "cf0e406f173a240b03a20cc5d971727340141d22"
+  },
   "profiles": {
     "town": {
       "id": "town",
@@ -13,8 +19,20 @@
       "root": "Opus 5.5 medium",
       "council": "Sonnet 5.5 xhigh + Opus 5.5 medium",
       "explorer": "Sonnet 5.5 medium",
-      "planningMode": "CLOOP town. Apply the main prompt; reread cloop/board.md after context loss. Route line first (DIRECT / FOCUSED / FULL). Counter the defaults: remove before adding, whole before detail, goal before measure. DEFINE: the council drafts the rubric (CORE / NON-CORE, one property per criterion, optional items to the backlog) and, for a new repo, spec and architecture in cloop/; run each criterion's literal wording against real cases; freeze. EXPLORE when the output shape is unclear: 3–5 parallel single-file one-shots, judged blind, winner by rule. CLIMB: CORE stage, then NON-CORE stage, each = one-shot → small loops → gate. One-shot: PREVENT step back, ONE self-contained file (Rosetta translation if the stack is unfamiliar), real run, check (good ≈80%, range 60–100%: integrate by refactor or translation against its outputs, delete the file; bad: re-DEFINE or EXPLORE, never small loops). Small loop: PREVENT (reproduce on BEST, route LOCAL / RELATIONAL with run boundary rows / UNSETTLED / UNDECIDABLE) → brief quoting the criterion → smallest coherent correction on BEST, regression test seen failing on BEST → judges review targeted + touched criteria on a frozen commit → CORRECT (small step back, one construction) or ACCEPT. Gates: core gate; release gate = full run + full suite once + full review; a reproduced violation blocks, no vote. Judges = reviewers (read-only, write nothing); duelers = loop-breakers (diagnose apart, cross-examine, each one bounded self-verified loop, you merge by rule, judges review). Outcomes: REGRESSION, PASS, ADVANCED, STALLED, BLOCKED. Triggers override allowances; ladder: repair differently → DUEL → EXPLORE → re-DEFINE. Never reinterpret the rubric, accept a proxy, weaken a test, skip judging, or count a rubric change as progress. Status line + two tables + Next after every check, loop and gate. Autonomous until a real blocker. Delete task files on PASS.",
-      "implementationMode": ""
+      "planningMode": "CLOOP town. Apply the main prompt; after any compaction or context loss, reread it and cloop/board.md. Route line first (DIRECT / FOCUSED / FULL). Counter the defaults: remove before adding, whole before detail, goal before measure. DEFINE: the council drafts the rubric (G0 first; CORE / NON-CORE / Backlog / Drop; one decidable property per criterion), and spec and architecture in cloop/ for a new repo; run each criterion's wording on real cases; freeze. EXPLORE when the output shape is unclear: 3–5 parallel single-file one-shots, judged blind, winner by rule. CLIMB: CORE stage, then NON-CORE stage, each = one-shot → small loops → gate. One-shot: PREVENT, ONE self-contained file (Rosetta if the stack is unfamiliar), real run, check (good ≈80%, range 60–100%: integrate, delete the file; bad: re-DEFINE or EXPLORE). Small loop: PREVENT (reproduce on BEST; LOCAL / RELATIONAL / UNSETTLED / UNDECIDABLE) → brief quoting the criterion → smallest correction on BEST, seen failing on BEST → judges on a frozen commit, probing in probe worktrees → one CORRECT or ACCEPT. Gates: core, then release (full run + full suite once + full review); only runs and deterministic checks reproduce; only reproduced required violations block. Every outcome except PASS → a step back, one board line, in the status line. Outcomes: REGRESSION, PASS, ADVANCED, BLOCKED, STALLED. Triggers override allowances; ladder: repair differently → DUEL → EXPLORE → re-DEFINE, each rung once per criterion. Judges = reviewers (read-only); duelers = loop-breakers. A failed call: re-dispatch once, then stop that role; never substitute. Builders, if listed: BUILDERS. Never reinterpret the rubric, accept a proxy, weaken a test, skip judging, or count a rubric change as progress. Status line + two tables + Next after every check, loop and gate. Autonomous until a real blocker. Delete task files on PASS.",
+      "implementationMode": "",
+      "builders": {
+        "cheap": {
+          "file": "town.cheap.md",
+          "dynamic": "Sonnet 5.5 medium",
+          "mechanical": "Haiku 5.5 xhigh"
+        },
+        "cheap-100": {
+          "file": "town.cheap-100.md",
+          "dynamic": "Sonnet 5.5 xhigh",
+          "mechanical": "Haiku 5.5 xhigh"
+        }
+      }
     },
     "high": {
       "id": "high",
@@ -25,8 +43,20 @@
       "root": "Opus 5.5 high",
       "council": "Opus 5.5 xhigh + Fable 5.1 xhigh",
       "explorer": "Opus 5.5 medium",
-      "planningMode": "CLOOP high. Apply the main prompt; reread cloop/board.md after context loss. Route line first (DIRECT / FOCUSED / FULL). Counter the defaults: remove before adding, whole before detail, goal before measure. DEFINE: the council drafts the rubric (CORE / NON-CORE, one property per criterion, optional items to the backlog) and, for a new repo, spec and architecture in cloop/; run each criterion's literal wording against real cases; freeze. EXPLORE when the output shape is unclear: 3–5 parallel single-file one-shots, judged blind, winner by rule. CLIMB: CORE stage, then NON-CORE stage, each = one-shot → small loops → gate. One-shot: PREVENT step back, ONE self-contained file (Rosetta translation if the stack is unfamiliar), real run, check (good ≈80%, range 60–100%: integrate by refactor or translation against its outputs, delete the file; bad: re-DEFINE or EXPLORE, never small loops). Small loop: PREVENT (reproduce on BEST, route LOCAL / RELATIONAL with run boundary rows / UNSETTLED / UNDECIDABLE) → brief quoting the criterion → smallest coherent correction on BEST, regression test seen failing on BEST → judges review targeted + touched criteria on a frozen commit → CORRECT (small step back, one construction) or ACCEPT. Gates: core gate; release gate = full run + full suite once + full review; a reproduced violation blocks, no vote. Judges = reviewers (read-only, write nothing); duelers = loop-breakers (diagnose apart, cross-examine, each one bounded self-verified loop, you merge by rule, judges review). Outcomes: REGRESSION, PASS, ADVANCED, STALLED, BLOCKED. Triggers override allowances; ladder: repair differently → DUEL → EXPLORE → re-DEFINE. Never reinterpret the rubric, accept a proxy, weaken a test, skip judging, or count a rubric change as progress. Status line + two tables + Next after every check, loop and gate. Autonomous until a real blocker. Delete task files on PASS.",
-      "implementationMode": ""
+      "planningMode": "CLOOP high. Apply the main prompt; after any compaction or context loss, reread it and cloop/board.md. Route line first (DIRECT / FOCUSED / FULL). Counter the defaults: remove before adding, whole before detail, goal before measure. DEFINE: the council drafts the rubric (G0 first; CORE / NON-CORE / Backlog / Drop; one decidable property per criterion), and spec and architecture in cloop/ for a new repo; run each criterion's wording on real cases; freeze. EXPLORE when the output shape is unclear: 3–5 parallel single-file one-shots, judged blind, winner by rule. CLIMB: CORE stage, then NON-CORE stage, each = one-shot → small loops → gate. One-shot: PREVENT, ONE self-contained file (Rosetta if the stack is unfamiliar), real run, check (good ≈80%, range 60–100%: integrate, delete the file; bad: re-DEFINE or EXPLORE). Small loop: PREVENT (reproduce on BEST; LOCAL / RELATIONAL / UNSETTLED / UNDECIDABLE) → brief quoting the criterion → smallest correction on BEST, seen failing on BEST → judges on a frozen commit, probing in probe worktrees → one CORRECT or ACCEPT. Gates: core, then release (full run + full suite once + full review); only runs and deterministic checks reproduce; only reproduced required violations block. Every outcome except PASS → a step back, one board line, in the status line. Outcomes: REGRESSION, PASS, ADVANCED, BLOCKED, STALLED. Triggers override allowances; ladder: repair differently → DUEL → EXPLORE → re-DEFINE, each rung once per criterion. Judges = reviewers (read-only); duelers = loop-breakers. A failed call: re-dispatch once, then stop that role; never substitute. Builders, if listed: BUILDERS. Never reinterpret the rubric, accept a proxy, weaken a test, skip judging, or count a rubric change as progress. Status line + two tables + Next after every check, loop and gate. Autonomous until a real blocker. Delete task files on PASS.",
+      "implementationMode": "",
+      "builders": {
+        "cheap": {
+          "file": "high.cheap.md",
+          "dynamic": "Sonnet 5.5 medium",
+          "mechanical": "Haiku 5.5 xhigh"
+        },
+        "cheap-100": {
+          "file": "high.cheap-100.md",
+          "dynamic": "Sonnet 5.5 xhigh",
+          "mechanical": "Haiku 5.5 xhigh"
+        }
+      }
     }
   }
 }

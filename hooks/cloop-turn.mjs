@@ -41,9 +41,9 @@ function heartbeatContext(state, event) {
   const id = promptId(event) || "unknown";
   const file = state.instructionFile || "CLAUDE.md";
   const lines = [
-    `cLoop heartbeat: the cLoop hook ran for prompt_id=${id}. Active profile=${state.profile}; preferred root=${state.root}; council=${state.council}; explorer=${state.explorer}; block sha=${sha}. The cLoop orchestration policy in ${file} applies to this turn; if it is not in context, re-read the managed block from ${file} before planning, delegation, or implementation. This heartbeat is direct evidence that the hook ran for this prompt.`,
+    `cLoop heartbeat: the cLoop hook ran for prompt_id=${id}. Active profile=${state.profile}; preferred root=${state.root}; council=${state.council}; explorer=${state.explorer}; builders=${state.builders || "none"}; block sha=${sha}. The cLoop orchestration policy in ${file} applies to this turn; if it is not in context, re-read the managed block from ${file} before planning, delegation, or implementation. This heartbeat is direct evidence that the hook ran for this prompt.`,
     state.planningMode,
-    "Default this turn: state the route line first (DIRECT / FOCUSED / FULL) unless the user overrode; FOCUSED and FULL start with DEFINE when this task has no frozen rubric; if cloop/board.md exists for this task, continue from its Next line.",
+    "Default this turn: state the route line first (DIRECT / FOCUSED / FULL) unless the user overrode; FOCUSED and FULL start with DEFINE when this task has no frozen rubric; if cloop/board.md exists for this task, continue from its Next line. After every outcome except PASS, take a step back and record it as one board line before the next loop.",
   ];
   if (event && event.model) {
     lines.push(`Harness model: ${event.model}. Preferred profile root: ${state.root}. The harness model identity is authoritative and the profile root is advisory; continue with the current root and do not request substitute-root approval because the labels differ.`);
@@ -54,9 +54,9 @@ function heartbeatContext(state, event) {
 function recoveryContext(state) {
   const file = state.instructionFile || "CLAUDE.md";
   return [
-    `cLoop recovery: SessionStart source=compact. The cLoop managed block in ${file} is authoritative; Claude Code reloads it after compaction, and if it is absent from context, re-read it from ${file} before planning, delegation, or implementation. Reread cloop/board.md if present.`,
+    `cLoop recovery: SessionStart source=compact. The cLoop managed block in ${file} is authoritative: re-read it from ${file} now, before any other action, even if it appears to be in context. Then reread cloop/board.md if present.`,
     state.planningMode,
-    "Default after recovery: continue from the Next line of cloop/board.md; if the current task has no board, state the route line first and start with DEFINE for FOCUSED or FULL.",
+    "Default after recovery: continue from the Next line of cloop/board.md; if the current task has no board, state the route line first and start with DEFINE for FOCUSED or FULL. After every outcome except PASS, take a step back and record it as one board line before the next loop.",
   ].filter(Boolean).join("\n\n");
 }
 
