@@ -12,8 +12,9 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { cheapgptMessage, detectCheapgpt } from "./cheapgpt-guard.mjs";
 
-export const PACKAGE_VERSION = "1.0.0";
+export const PACKAGE_VERSION = "1.0.2";
 export const SCHEMA_VERSION = 1;
 export const START_MARKER = "<!-- cloop:managed:start -->";
 export const END_MARKER = "<!-- cloop:managed:end -->";
@@ -30,6 +31,13 @@ const PROFILE_ALIASES = {
   high: "high",
   "high-council": "high",
 };
+export const BUILDER_IDS = ["none", "cheap", "cheap-100"];
+export const G0_LINES = [
+  "### G0 Method",
+  "- G0.C1 | CORE | The task board records a Step backs line naming every loop or gate whose outcome is not PASS, before the next loop starts, for every loop and gate of the task, seen in cloop/board.md | scope: this task's loops and gates | unsupported: none | evidence: the board's Loops and Step backs lines",
+  "- G0.C2 | CORE | The task board records a full step back after a criterion's second failure or a returning finding class, for every criterion and finding class of the task, seen in cloop/board.md | scope: this task's loops and gates | unsupported: none | evidence: the board's Loops and Step backs lines",
+  "- G0.C3 | CORE | The task opens loops only on reproduced violations of required criteria in the gate's scope, never on Backlog, Drop or reading-only findings, seen in cloop/board.md | scope: this task's loops | unsupported: none | evidence: the board's Loops and Open lines against the rubric's classes",
+];
 
 export class CloopError extends Error {
   constructor(message, code = "CLOOP") {
@@ -48,6 +56,12 @@ export function resolveProfileId(input) {
   return PROFILE_ALIASES[key] || null;
 }
 
+export function resolveBuilders(input) {
+  if (input == null) return null;
+  const key = String(input).trim().toLowerCase();
+  return BUILDER_IDS.includes(key) ? key : undefined;
+}
+
 export async function loadCatalog(sourceRoot = HERE) {
   const catalogPath = path.join(sourceRoot, "profiles", "catalog.json");
   const catalog = JSON.parse(await readFile(catalogPath, "utf8"));
@@ -57,7 +71,7 @@ export async function loadCatalog(sourceRoot = HERE) {
   return catalog;
 }
 
-export async function loadProfile(profileId, sourceRoot = HERE) {
+export async function loadProfile(profileId, sourceRoot = HERE, builders = "none") {
   const catalog = await loadCatalog(sourceRoot);
   const meta = catalog.profiles[profileId];
   if (!meta) {
@@ -66,10 +80,15 @@ export async function loadProfile(profileId, sourceRoot = HERE) {
       "PROFILE"
     );
   }
-  const filePath = path.join(sourceRoot, "profiles", meta.file);
+  const file = builders === "none" ? meta.file : meta.builders?.[builders]?.file;
+  if (!file) {
+    throw new CloopError(`Unknown builders '${builders}'. Use none, cheap or cheap-100.`, "BUILDERS");
+  }
+  const filePath = path.join(sourceRoot, "profiles", file);
   const body = await readFile(filePath, "utf8");
   return {
     id: profileId,
+    builders,
     meta,
     body,
     sha256: sha256(body),
@@ -77,15 +96,15 @@ export async function loadProfile(profileId, sourceRoot = HERE) {
   };
 }
 
-export function buildManagedBlock(profileId, profileBody) {
+export function buildManagedBlock(profileId, profileBody, builders = "none") {
   const body = String(profileBody).replace(/\s+$/, "");
   return [
     START_MARKER,
     "## cLoop Orchestration Policy",
     "",
-    `Active profile: \`${profileId}\``,
+    builders === "none" ? `Active profile: \`${profileId}\`` : `Active profile: \`${profileId}\` · builders: \`${builders}\``,
     "",
-    "This cLoop policy applies to every user turn in this repository and is addressed to the root agent; subagents follow only the instructions addressed to their role. Treat the active profile below as persistent orchestration policy for planning, implementation, testing, review, debugging, and completion. Do not silently substitute any model or reasoning effort the profile specifies for its roles. A preferred root configuration is advisory and must not block the already-running harness/system root. If a cheapGPT managed block is also present, this cLoop policy governs every phase, check, gate and judgment; cheapGPT keeps only how the root works (delegating implementation to its implementers and keeping its CavePrompt board), and those implementers follow cLoop's explorer rules: their own worktree and a self-contained packet. If the policy appears unavailable after context compaction or another harness transition, recover the current managed cLoop block before delegating or implementing.",
+    "This cLoop policy applies to every user turn in this repository and is addressed to the root agent; subagents follow only the instructions addressed to their role. Treat the active profile below as persistent orchestration policy for planning, implementation, testing, review, debugging, and completion. Do not silently substitute any model or reasoning effort the profile specifies for its roles. A preferred root configuration is advisory and must not block the already-running harness/system root. If the policy appears unavailable after context compaction or another harness transition, recover the current managed cLoop block before delegating or implementing.",
     "",
     body,
     "",
@@ -391,6 +410,9 @@ function buildState({
     root: profile.meta.root,
     council: profile.meta.council,
     explorer: profile.meta.explorer,
+    builders: profile.builders || "none",
+    buildersDetail: profile.builders && profile.builders !== "none" ? profile.meta.builders?.[profile.builders] || null : null,
+    buildersSource: profile.builders && profile.builders !== "none" ? profile.buildersSource || null : null,
     planningMode: profile.meta.planningMode,
     implementationMode: profile.meta.implementationMode,
     installedAt: previous?.installedAt || now,
@@ -434,6 +456,7 @@ export function parseArgs(argv) {
     command: null,
     project: process.cwd(),
     profile: null,
+    builders: null,
     dryRun: false,
     force: false,
     json: false,
@@ -469,6 +492,8 @@ export function parseArgs(argv) {
     else if (token.startsWith("--project=")) args.project = path.resolve(token.slice(10));
     else if (token === "--profile") args.profile = next();
     else if (token.startsWith("--profile=")) args.profile = token.slice(10);
+    else if (token === "--builders") args.builders = next();
+    else if (token.startsWith("--builders=")) args.builders = token.slice(11);
     else if (token === "--dry-run") args.dryRun = true;
     else if (token === "--force") args.force = true;
     else if (token === "--json") args.json = true;
@@ -518,6 +543,8 @@ Profiles:
 Options:
   --project <dir>     Target repository (default: cwd)
   --profile <id>      Required for install; optional for update
+  --builders <id>     none (default), cheap or cheap-100: cheapGPT's builders take the build
+                      steps; kept by update until you pass another value
   --dry-run           Validate and report without writing
   --force             Overwrite a manually edited cLoop block
   --json              Machine-readable output
@@ -575,7 +602,7 @@ async function writeInstallation({
   dryRun,
 }) {
   const catalog = await loadCatalog(HERE);
-  const managedBlock = buildManagedBlock(profile.id, profile.body);
+  const managedBlock = buildManagedBlock(profile.id, profile.body, profile.builders);
   const nextAgents = applyManagedBlock(inspect.agents || "", managedBlock);
   const created = {
     agents: !inspect.hasAgents,
@@ -594,7 +621,9 @@ async function writeInstallation({
       hookScript: hookMode === HOOK_MODE && (inspect.state?.created?.hookScript || created.hookScript),
       stateDir: inspect.state?.created?.stateDir || created.stateDir,
       claudeDir: inspect.state?.created?.claudeDir || created.claudeDir,
-      codexPermission: catalog.harness === "claude-codex",
+      codexPermission:
+        catalog.harness === "claude-codex" &&
+        (inspect.state ? Boolean(inspect.state.codexPermission) : !hasCodexPermission(inspect.hooksJson)),
     },
     previous: inspect.state,
   });
@@ -661,6 +690,24 @@ async function writeInstallation({
   return { dryRun: false, ...planned, state: nextState };
 }
 
+export const ADOPTION_NOTE =
+  "Next: cloop/rubric.md does not exist yet. In an existing project, make the first task an ADOPTION (ask the root: \"Run cLoop ADOPTION for this project\"), so the rubric with G0, the spec and the architecture exist before feature work. In a new project, the first FOCUSED or FULL task writes them in DEFINE.";
+
+function withAdoptionNote(result, inspect, paths) {
+  if (!result.dryRun && !inspect.state && !existsSync(path.join(paths.root, "cloop", "rubric.md"))) {
+    return { ...result, notes: [ADOPTION_NOTE] };
+  }
+  return result;
+}
+
+async function refuseCheapgpt(projectRoot, sourceRoot) {
+  const detected = await detectCheapgpt(projectRoot);
+  if (detected.found.length) {
+    const catalog = await loadCatalog(sourceRoot);
+    throw new CloopError(cheapgptMessage(detected, catalog.edition), "CHEAPGPT");
+  }
+}
+
 async function cmdInstall(args, sourceRoot = HERE) {
   const profileId = resolveProfileId(args.profile);
   if (!profileId) {
@@ -671,8 +718,12 @@ async function cmdInstall(args, sourceRoot = HERE) {
   }
   const paths = projectPaths(args.project);
   const inspect = await inspectProject(paths);
+  const builders = resolveBuilders(args.builders ?? "none");
+  if (!builders) throw new CloopError("--builders takes none, cheap or cheap-100", "USAGE");
+  await refuseCheapgpt(paths.root, sourceRoot);
   requireUnmodified(inspect, args.force, "install");
-  const profile = await loadProfile(profileId, sourceRoot);
+  const profile = await loadProfile(profileId, sourceRoot, builders);
+  profile.buildersSource = (await loadCatalog(sourceRoot)).buildersSource || null;
   const hookMode = args.hooks ? HOOK_MODE : "none";
   return writeInstallation({
     paths,
@@ -680,7 +731,7 @@ async function cmdInstall(args, sourceRoot = HERE) {
     profile,
     hookMode,
     dryRun: args.dryRun,
-  });
+  }).then((result) => withAdoptionNote(result, inspect, paths));
 }
 
 async function cmdUpdate(args, sourceRoot = HERE) {
@@ -700,7 +751,11 @@ async function cmdUpdate(args, sourceRoot = HERE) {
       "USAGE"
     );
   }
-  const profile = await loadProfile(resolveProfileId(profileId), sourceRoot);
+  const builders = args.builders != null ? resolveBuilders(args.builders) : resolveBuilders(inspect.state?.builders) || "none";
+  if (!builders) throw new CloopError("--builders takes none, cheap or cheap-100", "USAGE");
+  await refuseCheapgpt(paths.root, sourceRoot);
+  const profile = await loadProfile(resolveProfileId(profileId), sourceRoot, builders);
+  profile.buildersSource = (await loadCatalog(sourceRoot)).buildersSource || null;
   let hookMode = inspect.state?.hookMode === "none" ? "none" : HOOK_MODE;
   if (args.hooksExplicit) hookMode = args.hooks ? HOOK_MODE : "none";
   return writeInstallation({
@@ -817,8 +872,8 @@ export async function doctorProject(projectRoot, sourceRoot = HERE) {
     const expectedProfile = state.profile && resolveProfileId(state.profile);
     if (expectedProfile) {
       try {
-        const profile = await loadProfile(expectedProfile, sourceRoot);
-        const expected = buildManagedBlock(profile.id, profile.body);
+        const profile = await loadProfile(expectedProfile, sourceRoot, resolveBuilders(state.builders) || "none");
+        const expected = buildManagedBlock(profile.id, profile.body, profile.builders);
         if (inspect.region.block.replace(/\s+$/, "") !== expected.replace(/\s+$/, "")) {
           warnings.push("installed block does not match current cLoop profile sources; run update");
         }
@@ -873,10 +928,47 @@ export async function doctorProject(projectRoot, sourceRoot = HERE) {
     }
   }
 
+  const recordedBuilders = state ? (state.builders == null ? "none" : resolveBuilders(state.builders)) : null;
+  if (state && !recordedBuilders) issues.push(`unrecognized builders '${state.builders}'`);
+  if (inspect.region.kind === "ok" && recordedBuilders) {
+    const hasBlock = inspect.region.block.includes("**Builders** (`--builders ");
+    const matches = recordedBuilders === "none" ? !hasBlock : inspect.region.block.includes(`**Builders** (\`--builders ${recordedBuilders}\``);
+    if (!matches) issues.push(`the managed block's Builders section does not match --builders ${recordedBuilders}; run update`);
+  }
+  const vendorText = await readTextIfExists(path.join(sourceRoot, "vendor", "cheapgpt-builders.json"));
+  let vendorSource = null;
+  try {
+    vendorSource = vendorText == null ? null : JSON.parse(vendorText).source;
+  } catch {
+    vendorSource = null;
+  }
+  const sourceCatalog = await loadCatalog(sourceRoot);
+  if (JSON.stringify(vendorSource) !== JSON.stringify(sourceCatalog.buildersSource || null)) {
+    issues.push("vendor/cheapgpt-builders.json does not match the builder source recorded in profiles/catalog.json; regenerate the profiles");
+  } else if (recordedBuilders && recordedBuilders !== "none" && JSON.stringify(state.buildersSource || null) !== JSON.stringify(vendorSource)) {
+    warnings.push("installed builders come from an older cheapGPT roles table than this checkout; run update");
+  }
+  const cheapgpt = await detectCheapgpt(projectRoot);
+  if (cheapgpt.found.length) {
+    issues.push(`cheapGPT is installed here too (${cheapgpt.found.join("; ")}); keep one package: remove cheapGPT with its own uninstaller, or uninstall cLoop`);
+  }
+  const rubricText = await readTextIfExists(path.join(projectRoot, "cloop", "rubric.md"));
+  if (rubricText != null && !G0_LINES.every((line) => rubricText.includes(line))) {
+    warnings.push("cloop/rubric.md lacks the G0 Method block verbatim; copy it from the RUBRIC section of the policy");
+  }
+  for (let dir = path.dirname(path.resolve(projectRoot)); ; dir = path.dirname(dir)) {
+    const text = await readTextIfExists(path.join(dir, "AGENTS.md"));
+    if (text != null && (text.includes(START_MARKER) || text.includes("cheapgpt:managed"))) {
+      issues.push(`${path.join(dir, "AGENTS.md")} holds an orchestration block; codex exec sessions launched in this project would load it`);
+    }
+    if (path.dirname(dir) === dir) break;
+  }
+
   return {
     ok: issues.length === 0,
     project: projectRoot,
     profile: state?.profile || null,
+    builders: recordedBuilders || null,
     hookMode: state?.hookMode || null,
     issues,
     warnings,
@@ -935,6 +1027,7 @@ async function main() {
       if (result.ok) process.stdout.write("cLoop doctor: ok\n");
       else process.stdout.write("cLoop doctor: FAILED\n");
       if (result.profile) process.stdout.write(`profile: ${result.profile}\n`);
+      if (result.builders) process.stdout.write(`builders: ${result.builders}\n`);
       if (result.hookMode) process.stdout.write(`hookMode: ${result.hookMode}\n`);
       for (const issue of result.issues || []) process.stdout.write(`issue: ${issue}\n`);
       for (const warning of result.warnings || []) process.stdout.write(`warning: ${warning}\n`);
@@ -943,7 +1036,8 @@ async function main() {
       process.stdout.write(`cLoop ${result.command || "plan"} dry-run: no files written\n`);
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     } else {
-      process.stdout.write(`cLoop ${result.command} complete (${result.profile || result.action || "ok"})\n`);
+      process.stdout.write(`cLoop ${result.command} complete (${result.profile || result.action || "ok"}${result.state?.builders && result.state.builders !== "none" ? `, builders ${result.state.builders}` : ""})\n`);
+      for (const note of result.notes || []) process.stdout.write(`${note}\n`);
       if (result.hookMode === HOOK_MODE) process.stdout.write("Hooks installed in .claude/settings.json. Accept the workspace trust dialog and review /hooks.\n");
     }
     if (result.command === "doctor" && result.ok === false) process.exitCode = 1;

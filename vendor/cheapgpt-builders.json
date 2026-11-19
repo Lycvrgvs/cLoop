@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "edition": "main",
+  "source": {
+    "package": "cheapGPT",
+    "version": "1.8.4",
+    "edition": "exp",
+    "commit": "bef9bb1b4cff88d1e3c12176b3f4f36eeef4d755"
+  },
+  "profiles": {
+    "cheap": {
+      "dynamic": {
+        "model": "gpt-6.1-terra",
+        "effort": "medium"
+      },
+      "mechanical": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      }
+    },
+    "cheap-100": {
+      "dynamic": {
+        "model": "gpt-6.1-terra",
+        "effort": "max"
+      },
+      "mechanical": {
+        "model": "gpt-6-luna",
+        "effort": "max"
+      }
+    }
+  }
+}
