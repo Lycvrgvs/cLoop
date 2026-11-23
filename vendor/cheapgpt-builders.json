@@ -3,9 +3,9 @@
   "edition": "codex",
   "source": {
     "package": "cheapGPT",
-    "version": "1.8.4",
+    "version": "1.9.0",
     "edition": "main",
-    "commit": "cf1b138d1b9342adc84fa45d2194e15fe9779054"
+    "commit": "cf7127bf101fffb4eac5f419fe870e3353cac80f"
   },
   "profiles": {
     "cheap": {

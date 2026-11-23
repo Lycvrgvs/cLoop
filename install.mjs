@@ -22,7 +22,7 @@ import {
   setDocLimit,
 } from "./codex-config.mjs";
 
-export const PACKAGE_VERSION = "1.0.2";
+export const PACKAGE_VERSION = "1.1.0";
 export const SCHEMA_VERSION = 1;
 export const START_MARKER = "<!-- cloop:managed:start -->";
 export const END_MARKER = "<!-- cloop:managed:end -->";
@@ -37,12 +37,7 @@ const PROFILE_ALIASES = {
   "high-council": "high",
 };
 export const BUILDER_IDS = ["none", "cheap", "cheap-100"];
-export const G0_LINES = [
-  "### G0 Method",
-  "- G0.C1 | CORE | The task board records a Step backs line naming every loop or gate whose outcome is not PASS, before the next loop starts, for every loop and gate of the task, seen in cloop/board.md | scope: this task's loops and gates | unsupported: none | evidence: the board's Loops and Step backs lines",
-  "- G0.C2 | CORE | The task board records a full step back after a criterion's second failure or a returning finding class, for every criterion and finding class of the task, seen in cloop/board.md | scope: this task's loops and gates | unsupported: none | evidence: the board's Loops and Step backs lines",
-  "- G0.C3 | CORE | The task opens loops only on reproduced violations of required criteria in the gate's scope, never on Backlog, Drop or reading-only findings, seen in cloop/board.md | scope: this task's loops | unsupported: none | evidence: the board's Loops and Open lines against the rubric's classes",
-];
+export const TOOL_NAME = "cloop.mjs"; // the flow tool the profiles run, installed at the project root
 
 export class CloopError extends Error {
   constructor(message, code = "CLOOP") {
@@ -226,6 +221,7 @@ function projectPaths(projectRoot) {
     hooksDir: path.join(projectRoot, ".codex", "hooks"),
     hooksJson: path.join(projectRoot, ".codex", "hooks.json"),
     hookScript: path.join(projectRoot, ".codex", "hooks", HOOK_SCRIPT_NAME),
+    tool: path.join(projectRoot, TOOL_NAME),
     codexConfig: path.join(projectRoot, ".codex", "config.toml"),
   };
 }
@@ -679,7 +675,7 @@ async function writeInstallation({
     instructionFile: "AGENTS.md",
     hookMode,
     managedBlockSha256: nextState.managedBlockSha256,
-    writes: ["AGENTS.md", ".cloop/state.json", ".codex/config.toml"],
+    writes: ["AGENTS.md", ".cloop/state.json", TOOL_NAME, ".codex/config.toml"],
   };
   if (hookMode === "codex") {
     planned.writes.push(".codex/hooks.json", `.codex/hooks/${HOOK_SCRIPT_NAME}`);
@@ -701,11 +697,13 @@ async function writeInstallation({
       inspect.hasHookScript ? await readTextIfExists(paths.hookScript) : null
     ),
     snapshotFile(paths.codexConfig, inspect.codexConfig),
+    snapshotFile(paths.tool, await readTextIfExists(paths.tool)),
   ];
 
   try {
     await atomicWrite(paths.agents, nextAgents);
     await maybeFail("agents");
+    await copyFile(path.join(HERE, TOOL_NAME), paths.tool);
     await mkdir(paths.codexDir, { recursive: true });
     await atomicWrite(paths.codexConfig, tomlMerge.text);
     await maybeFail("config");
@@ -733,7 +731,7 @@ async function writeInstallation({
 }
 
 export const ADOPTION_NOTE =
-  "Next: cloop/rubric.md does not exist yet. In an existing project, make the first task an ADOPTION (ask the root: \"Run cLoop ADOPTION for this project\"), so the rubric with G0, the spec and the architecture exist before feature work. In a new project, the first FOCUSED or FULL task writes them in DEFINE.";
+  "Next: cloop/rubric.md does not exist yet. In an existing project the first FOCUSED or FULL task starts with ADOPTION (node cloop.mjs init detects the project and enters ADOPT), so the rubric, the spec and the architecture exist before feature work. In a new project, the first task writes them in DEFINE.";
 
 function withAdoptionNote(result, inspect, paths) {
   if (!result.dryRun && !inspect.state && !existsSync(path.join(paths.root, "cloop", "rubric.md"))) {
@@ -839,6 +837,7 @@ async function cmdUninstall(args) {
     removes: [".cloop/state.json"],
     writes: [],
   };
+  if (existsSync(paths.tool)) planned.removes.push(TOOL_NAME);
   if (inspect.hasAgents) planned.writes.push("AGENTS.md");
   if (inspect.hasHookScript) planned.removes.push(`.codex/hooks/${HOOK_SCRIPT_NAME}`);
   if (inspect.hasHooksJson) planned.writes.push(".codex/hooks.json");
@@ -857,9 +856,11 @@ async function cmdUninstall(args) {
       inspect.hasHookScript ? await readTextIfExists(paths.hookScript) : null
     ),
     snapshotFile(paths.codexConfig, inspect.codexConfig),
+    snapshotFile(paths.tool, await readTextIfExists(paths.tool)),
   ];
 
   try {
+    await rm(paths.tool, { force: true });
     if (nextAgents == null || nextAgents.trim() === "") {
       if (inspect.hasAgents) await rm(paths.agents, { force: true });
     } else {
@@ -1021,9 +1022,11 @@ export async function doctorProject(projectRoot, sourceRoot = HERE) {
   if (cheapgpt.found.length) {
     issues.push(`cheapGPT is installed here too (${cheapgpt.found.join("; ")}); keep one package: remove cheapGPT with its own uninstaller, or uninstall cLoop`);
   }
-  const rubricText = await readTextIfExists(path.join(projectRoot, "cloop", "rubric.md"));
-  if (rubricText != null && !G0_LINES.every((line) => rubricText.includes(line))) {
-    warnings.push("cloop/rubric.md lacks the G0 Method block verbatim; copy it from the RUBRIC section of the policy");
+  const installedTool = await readTextIfExists(paths.tool);
+  if (installedTool == null) issues.push(`missing ${TOOL_NAME} at the project root`);
+  else {
+    const expectedTool = await readTextIfExists(path.join(sourceRoot, TOOL_NAME));
+    if (expectedTool != null && sha256(installedTool.replace(/\r\n/g, "\n")) !== sha256(expectedTool.replace(/\r\n/g, "\n"))) warnings.push(`installed ${TOOL_NAME} does not match current sources; run update`);
   }
 
   return {
