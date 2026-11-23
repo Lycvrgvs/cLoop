@@ -2,32 +2,47 @@
 
 **cLoop** is a council loop for coding agents. The *c* stands for **council**: cLoop is short for *council-Loop*, and everywhere else it is simply cLoop.
 
-You state the goal. A council of two independent models turns it into a rubric of single-property criteria, tagged CORE or NON-CORE. The root builds one self-contained one-shot, runs it on real input, and then closes the remaining gaps in small loops. Each loop corrects one thing and is judged by the council against the frozen rubric on a frozen commit. When a problem resists repair, the same two models switch roles: they become duelers, each diagnosing apart and fixing in its own worktree, and the root merges the result by an objective rule. Nothing counts as done until the release gate passes: the full product on a real run, the full suite once, and a full review.
+You state the goal. A council of two independent models helps turn it into a rubric of single-property criteria, tagged CORE or NON-CORE. The root builds the stage as one self-contained one-shot, runs it on real input, and closes what is left in small loops; the council judges every loop against the rubric on a committed candidate. When a failure resists the root, the same two models become loop-breakers; when they cannot close it either, you decide a re-plan. Nothing counts as done until the release gate passes: the product end to end on a real run, the full suite, and a full review.
 
-This `claude` branch runs everything in **Claude Code**: the root is a Claude Code session and every member and explorer is a native subagent launched with the `Agent` tool and an explicit `model` and `effort`. No Codex needed.
+This `claude` branch runs everything in **Claude Code**: the root is a Claude Code session and every member, explorer and builder is a native subagent launched with the `Agent` tool and an explicit `model` and `effort`. No Codex needed.
+
+## What is new in 1.1.0: a decidable architecture
+
+Every step of cLoop is now decidable, and each decision has one owner:
+
+- **What can be computed is enforced by code.** A small tool, `cloop.mjs` (Node, standard library only, installed at the project root), holds the flow: the states and their transitions, the evidence each exit needs, the council's outcome, BEST (the commit everything builds from, which only moves forward), the escalation ladder, the rubric's format and freeze, and the gates' preconditions. The agent cannot skip a step, invent an outcome or move the finish line: the tool refuses and says what is missing.
+- **What needs judgment is guided by principles, not scripts.** The prompt keeps only what code cannot decide: the step back, causes, tagging, merges, quality and taste, under five laws, a few vetoes and the cues that trigger them. Each state's instructions are printed by the tool when the state is entered, so the prompt stays small (about 12 KB, down from 37 KB) and every instruction is read when it applies.
+- **What belongs to you stays yours.** Goals, any change to an approved or frozen finish line, a re-plan when a failure resists the loop-breakers, and acceptance are your decisions, asked with options and a recommendation while the agent keeps working on the rest.
+
+For you this means runs that follow the method instead of drifting from it, evidence you can check (`cloop/log.jsonl`, `cloop/board.md`, `node cloop.mjs report`), and fewer tokens spent on instructions the model would otherwise re-read and re-interpret on every turn.
 
 ## Why cLoop
 
 Models have three default habits: they add where they should delete, they fix details where they should look at the whole, and they satisfy the measure where they should satisfy the goal. cLoop counters each one with mechanics, not exhortation:
 
-- **A frozen rubric decides.** Every criterion holds one property, is tested against real cases before it is frozen, and can only change through an explicit step back. It never changes silently to make a result pass.
-- **Real runs, not proxies.** A passing test is not rubric satisfaction, and agreement between judges is not evidence. Every claim rests on the product used on real input.
-- **One-shot first, loops second.** A single self-contained file shows early whether the approach is about 80% right. A bad one-shot goes back to DEFINE or EXPLORE, never into a long chain of patches.
-- **Judges write nothing.** The judges are the reviewers: read-only, blind to authorship and to each other. The duelers are the loop-breakers: they are the only council role that implements.
+- **Step backs on the whole.** Every build opens with a step back that reads all the evidence, names the class of failure and its root cause, considers removal first, and decides one correction for the whole property. It comes in three sizes: yours in a few lines, the loop-breakers' in a few paragraphs, and a re-plan you approve.
+- **Real runs, not proxies.** A passing test is not rubric satisfaction, and agreement between judges is not evidence. Every MET names the nearest counterfeit it excludes and a boundary case that was run; a violation counts only once the root reproduces it.
+- **One-shot first, loops second.** A single self-contained file shows early whether the approach is right. A bad one-shot goes to a re-plan, never into a long chain of patches. The small loop is one mechanic used two ways: it builds what the one-shot left and corrects what a council found.
+- **Escalate only as far as the failure requires.** Progress keeps the root in its small loops; repeated stalls or regressions bring in the loop-breakers; only what they cannot close comes to you.
 - **Cheap mechanics first.** Town Council is built to run real work on small accounts; High Council spends more where the task is hardest.
 
 ## The method in one screen
 
 ```text
-DEFINE   what      council drafts the rubric (CORE / NON-CORE); each criterion's literal wording runs on real cases; freeze
-EXPLORE  how       only when the output shape is unclear: 3–5 parallel single-file one-shots, judged blind, winner by rule
-CLIMB    ship      CORE stage, then NON-CORE stage; each = one-shot → small loops → gate
-                   small loop: PREVENT → BRIEF → BUILD → JUDGE → CORRECT or ACCEPT
-                   gates: core gate; release gate = full run + full suite once + full review
-STEP BACK          repair differently → DUEL → EXPLORE → re-DEFINE
+ROUTE    DIRECT (one local edit) | FOCUSED: DEFINE → CLIMB | FULL: DEFINE → EXPLORE (when triggered) → CLIMB
+ADOPT    an existing project is adopted first: keep, simplify or replace, with you
+DEFINE   goals with you → both members draft the rubric → CORE / NON-CORE → freeze
+         (provisional until the first council, then frozen hard; changes need your words)
+EXPLORE  2–4 parallel single-file one-shots, judged blind, ranked by the tool, merged
+CLIMB    CORE stage, then NON-CORE stage; each = PREVENT → one-shot → small loops → gate
+ACCEPT   the release gate passed: you accept, or your feedback goes back to DEFINE or EXPLORE
+
+LADDER   small: your step back + a small loop      (3rd ADVANCED, 2nd STALLED or REGRESSION → full)
+         full: two loop-breakers, one merge         (ADVANCED → small; 2nd STALLED or REGRESSION → re-define)
+         re-define: your comment → their re-plan → your approval   (ADVANCED → small)
 ```
 
-Outcomes are REGRESSION, PASS, ADVANCED, STALLED or BLOCKED. After every check, loop and gate the root reports one status line, two tables (the whole rubric, then this loop) and the single next action, then keeps working until a real blocker.
+Outcomes are PASS, ADVANCED, STALLED, REGRESSION or BLOCKED, computed by the tool. After every judging the root sends you `node cloop.mjs report` and keeps working.
 
 ## Profiles
 
@@ -36,7 +51,7 @@ Outcomes are REGRESSION, PASS, ADVANCED, STALLED or BLOCKED. After every check, 
 | `town` | Town Council | Opus 5.5 medium | Sonnet 5.5 xhigh | Opus 5.5 medium | Sonnet 5.5 medium | Claude Max |
 | `high` | High Council | Opus 5.5 high | Opus 5.5 xhigh | Fable 5.1 xhigh | Opus 5.5 medium | Claude Max (higher tier) |
 
-Install **exactly one** profile per project. Member A and Member B judge every loop and every gate, and duel when a problem resists repair.
+Install **exactly one** profile per project. Member A and Member B judge every loop and every gate, and become the loop-breakers when a failure resists the root.
 
 Both members come from the same lab on this branch, so every review names the nearest counterfeit (what could look like the property without being it) with extra care.
 
@@ -48,7 +63,7 @@ Both members come from the same lab on this branch, so every review names the ne
 | `codex` | Codex | native Codex subagents |
 | `claude` | Claude Code | native Claude Code subagents |
 
-Every branch carries the same method. Only the roles section of the profile and the installer target differ.
+Every branch carries the same method and the same `cloop.mjs` at 1.1.0. Only the roles subsection of the profile, the installer target and the builders' invocation differ.
 
 ## For AI coding agents (Claude Code, Codex, Cursor, OpenCode)
 
@@ -68,7 +83,7 @@ node /path/to/cLoop/install.mjs install --project . --profile town
 
 ## Install / update / doctor / uninstall
 
-On a first install, the installer recommends making the first task an ADOPTION when the project has no `cloop/rubric.md` yet, so the rubric (opening with the G0 Method goal), the spec and the architecture exist before feature work. `doctor` checks that the rubric carries G0 verbatim.
+In an existing project, the first FOCUSED or FULL task starts with ADOPTION: `node cloop.mjs init` detects the project and enters ADOPT, so the rubric, the spec and the architecture exist before feature work. `doctor` checks that the installed `cloop.mjs` matches this checkout.
 
 ```bash
 node /path/to/cLoop/install.mjs install --project . --profile town
@@ -86,6 +101,7 @@ Flags: `--dry-run`, `--force` (overwrite a hand-edited cLoop block), `--json`, `
 
 ```text
 CLAUDE.md                        # bounded cLoop block appended or replaced
+cloop.mjs                        # the flow tool the policy runs (node cloop.mjs status)
 .cloop/state.json                # profile, hashes, hook mode
 .claude/settings.json            # cLoop hook entries merged into "hooks"; other keys kept
 .claude/hooks/cloop-turn.mjs     # heartbeat (UserPromptSubmit) + short compact reminder (SessionStart: compact)
@@ -93,11 +109,11 @@ CLAUDE.md                        # bounded cLoop block appended or replaced
 
 Claude Code re-reads the project-root `CLAUDE.md` after compaction, so the compact hook injects only the turn reminder, never the whole block. Everything outside the `<!-- cloop:managed:start -->` / `<!-- cloop:managed:end -->` markers stays yours; `uninstall` removes only cLoop files.
 
-While a task runs, the root keeps `cloop/board.md` (the board), `cloop/runs/` and `cloop/wt/` (call folders and worktrees) and `temporary/`. All are git-excluded and deleted when the task passes; on BLOCKED the board stays until a solution is found. Three files are permanent and committed: `cloop/rubric.md`, `cloop/spec.md` and `cloop/architecture.md`.
+While a task runs, `cloop.mjs` keeps `cloop/state.json`, `cloop/log.jsonl` (every card, run, call, judging, step back and transition) and the rendered `cloop/board.md`; calls live in `cloop/runs/` and `cloop/wt/`, scratch in `temporary/`. All are git-excluded; `node cloop.mjs clean` removes the call folders, worktrees and scratch after DONE and keeps the state, log and board. Three files are permanent and committed: `cloop/rubric.md`, `cloop/spec.md` and `cloop/architecture.md`. Where the sandbox keeps `.git` read-only, `init` keeps the repository in `cloop/git`, with its history; run git through `node cloop.mjs git <args>`.
 
 ## cheapGPT builders (`--builders`)
 
-cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed in the same project. To get cheapGPT's economical builders, install cLoop with `--builders cheap` or `--builders cheap-100`. The builders then take only the build steps (each one-shot file and each small loop's BUILD), run as native Claude Code subagents in their own worktrees. The root keeps everything else, and the council never changes. Pick the builders separately from `town` or `high`.
+cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed in the same project. To get cheapGPT's economical builders, install cLoop with `--builders cheap` or `--builders cheap-100`. The builders then take only the build steps (each one-shot file and each small loop's build): each is one native subagent for the whole task, seeded with a conversation packet and continued through `SendMessage`, and takes every assignment in its own worktree of BEST (`node cloop.mjs call dynamic|mechanical`); the root allocates by whether the handoff can state the exact result, merges, and runs the real path before the council. The root keeps everything else, and the council never changes. Pick the builders separately from `town` or `high`.
 
 | Option | Dynamic builder | Mechanical builder |
 | --- | --- | --- |
@@ -105,7 +121,7 @@ cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed i
 | `--builders cheap` | Sonnet 5.5 medium | Haiku 5.5 xhigh |
 | `--builders cheap-100` | Sonnet 5.5 xhigh | Haiku 5.5 xhigh |
 
-The rows come from cheapGPT 1.8.4's published `profiles/roles.json` (the `claude-edition` edition), copied into `vendor/cheapgpt-builders.json` at release time. Nothing is fetched at install.
+The rows come from cheapGPT 1.9.0's published `profiles/roles.json` (the `claude-edition` edition), copied into `vendor/cheapgpt-builders.json` at release time. Nothing is fetched at install.
 
 ```bash
 node /path/to/cLoop/install.mjs install --project . --profile town --builders cheap
@@ -130,12 +146,13 @@ node tools/release.mjs --txt /path/to/cloop-town.txt --version X.Y.Z
 node --test test/installer.test.mjs
 ```
 
-`sync-builders` copies the builder rows from cheapGPT's published roles table, checked out at a pinned commit of the paired edition. `release` then derives the six profiles for this branch's edition (`town`, `high`, each with builders `none`, `cheap` and `cheap-100`) from the Town Council source prompt. It refuses to run if the prompt's roles section or intro no longer match its templates.
+`sync-builders` copies the builder rows from cheapGPT's published roles table, checked out at a pinned commit of the paired edition. `release` then derives the six profiles for this branch's edition (`town`, `high`, each with builders `none`, `cheap` and `cheap-100`) from the Town Council source prompt, the mono-agent `cloop-town.txt`. It refuses to run if the prompt's roles subsection or intro no longer match its template. Copy the released `cloop.mjs` next to `install.mjs`; the installer ships that file.
 
 ## Layout
 
 ```text
 install.mjs              zero-dependency installer
+cloop.mjs                the flow tool, copied into each target project's root
 profiles/town.md         Town Council policy (generated)
 profiles/high.md         High Council policy (generated)
 profiles/*.cheap*.md     the same policies with a Builders block (generated)
