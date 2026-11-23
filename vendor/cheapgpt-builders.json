@@ -3,9 +3,9 @@
   "edition": "main",
   "source": {
     "package": "cheapGPT",
-    "version": "1.8.4",
+    "version": "1.9.0",
     "edition": "exp",
-    "commit": "bef9bb1b4cff88d1e3c12176b3f4f36eeef4d755"
+    "commit": "3062147fb1ef540323c8a03d95753a7ec2de1249"
   },
   "profiles": {
     "cheap": {

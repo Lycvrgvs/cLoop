@@ -4,10 +4,12 @@
 //
 //   node tools/release.mjs --txt <path to cloop-town.txt> [--version X.Y.Z] [--edition main|codex|claude]
 //
-// Output per edition: town.md and high.md (no builders), plus town.cheap.md, town.cheap-100.md,
-// high.cheap.md and high.cheap-100.md, which add a Builders block from vendor/cheapgpt-builders.json
-// (written by tools/sync-builders.mjs). The txt is the Town Council prompt for the main edition
-// (Claude Code root + Codex CLI members); every other profile and edition is derived from it here.
+// Output: town.md and high.md (no builders), plus town.cheap.md, town.cheap-100.md, high.cheap.md and
+// high.cheap-100.md, which add a Builders block from vendor/cheapgpt-builders.json (written by
+// tools/sync-builders.mjs). From 1.1.0 the txt is the mono-agent Town Council prompt, written for the codex
+// edition (Codex root, native Codex subagents) and run with the flow tool cloop.mjs. Every edition is
+// derived from it here: only the intro's harness, the council sentence and the ROLES AND INVOCATION
+// subsection (and the Builders block) differ.
 // The tool refuses to run when the txt's ROLES AND INVOCATION section or intro no longer match the
 // templates below: update the templates in this file first, then rerun. It never guesses.
 import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from "node:fs";
@@ -58,96 +60,12 @@ export const CHEAPGPT_EDITION = { main: "exp", codex: "main", claude: "claude-ed
 const CLAUDE_ALIAS = { "Opus 5.5": "opus", "Sonnet 5.5": "sonnet", "Haiku 5.5": "haiku", "Fable 5.1": "fable" };
 const label = ([name, effort]) => `${name} ${effort}`;
 
-const INTRO_TOWN_MAIN = "You are the cLoop root (the c stands for council): a Claude Code session that owns the task from goals to release.";
-const LABS_MAIN = "A council of two fresh, independent models from different labs (Member A and Member B)";
+const SOURCE_EDITION = "codex";
+const INTRO_TOWN = "You are the cLoop root (the c stands for council): a Codex session that owns a task from goals to release, with the user in the loop.";
 const LABS_SAME = "A council of two fresh, independent models (Member A and Member B)";
-
-const ROLES_HEAD = `## ROLES AND INVOCATION
-
-The user fixes the model hierarchy for the task; it does not change during it.
-
-| Role | Model | Run as | Writes |
-|---|---|---|---|
-`;
-
-const WRITES_MEMBER = "only its probe worktree as judge; its own worktree as dueler";
-
-const SHARED_BULLETS = `- The same models and effort serve loops and gates; gates differ by scope and by the probe requirement.
-- The council is never substituted: a failed call is re-dispatched once, then that role stops and is reported.
-- Every member call is a new instance with a self-contained packet. Explorers are resumed only for follow-ups on their own option.
-- Every call works in its own worktree: a judge or a duel diagnosis in a probe worktree of the frozen commit, discarded after the call; a writer in a worktree of BEST.
-`;
-
-const SAME_LAB = "- The two members are different models: their findings complement each other. They come from the same lab and may share blind spots, so every review names the nearest counterfeit with extra care.\n";
-
-const WORKTREE_BLOCK = `**Worktree per call** (the frozen commit for a judge or a diagnosis, BEST for a writer):
-
-\`git worktree add -b cl/<call-id> "$REPO/cloop/wt/<call-id>" <commit>\`
-`;
-
-const FAILED_CALL = "Anything else is a failed call: re-dispatch it once with the same packet. A second failure stops that role and is reported; the step never passes on the remaining verdict.";
-
-const EXEC_TAIL = `- Before and after every judge call, compare HEAD, \`git status --porcelain\` and a hash of \`git diff\` in the repository; any change voids the call. After every write call, verify nothing changed outside its worktree.
-- Fail-before runs use a worktree of BEST with the new test file copied in, never \`git stash\`.
-`;
-
-const PREFLIGHT_TAIL = `- P3: a judge call leaves the repository unchanged.
-- P4: two writers at once each change only their own worktree.
-- Add \`cloop/*\`, \`!cloop/rubric.md\`, \`!cloop/spec.md\`, \`!cloop/architecture.md\` and \`temporary/\` to \`.git/info/exclude\`.
-`;
-
-const PREFLIGHT_HEAD = "**PREFLIGHT** (once per repo; results on the board; a failure stops that role and is reported):\n";
-
-function rolesMain(m) {
-  return `${ROLES_HEAD}| Root | ${m.root} (recommended) | this session | code, board, merges |
-| Member A (judge, dueler) | ${label(m.a)} | native Claude Code subagent, fresh per call | ${WRITES_MEMBER} |
-| Member B (judge, dueler) | ${label(m.b)} | \`codex exec\`, new session per call | ${WRITES_MEMBER} |
-| Explorer | ${label(m.e)} | \`codex exec\`, fresh per option | its own worktree |
-
-- The two members are different models from different labs: their findings complement each other.
-${SHARED_BULLETS}
-**Run folder per call:** \`cloop/runs/<call-id>/\` with \`packet.md\`, \`out.md\` and \`events.jsonl\`. Use absolute paths and random call-ids, so no path a judge sees reveals who built what.
-
-${WORKTREE_BLOCK}
-**Member B** (the sandbox confines its writes to that worktree; a judge's packet also forbids edits to tracked files):
-
-\`codex exec -m ${m.b[0]} -c model_reasoning_effort=${m.b[1]} -s workspace-write -C "$REPO/cloop/wt/<call-id>" --json -o "$RUN/out.md" "Read $RUN/packet.md and follow it." < /dev/null > "$RUN/events.jsonl"\`
-
-**Explorers:** the same command with their own \`-m <model> -c model_reasoning_effort=<effort>\`.
-
-**Member A:** a native subagent with model ${m.a[0]} and ${m.a[1]} effort, prompted "Read <packet path> and follow it." Its packet names its worktree and forbids writes elsewhere.
-
-**Execution:**
-- Launch all calls of a step in one turn and wait for every completion in that turn.
-- A call is complete only when it exited 0 and \`out.md\` follows the format. ${FAILED_CALL}
-- After 30 minutes without a result, ask the call for a short status report and tell it to continue. No answer, or no change → kill it; that is its one re-dispatch.
-${EXEC_TAIL}
-${PREFLIGHT_HEAD}- P1: Codex runs and is logged in, and no \`AGENTS.md\` that \`codex exec\` reads from a worktree up to the filesystem root holds an orchestration policy.
-- P2: each role's model and effort are confirmed from the harness's record (\`events.jsonl\`, the subagent call), never from the role's reply.
-${PREFLIGHT_TAIL}`;
-}
-
-function rolesCodex(m) {
-  return `${ROLES_HEAD}| Root | ${m.root} (recommended) | this session | code, board, merges |
-| Member A (judge, dueler) | ${label(m.a)} | native Codex subagent, fresh per call | ${WRITES_MEMBER} |
-| Member B (judge, dueler) | ${label(m.b)} | native Codex subagent, fresh per call | ${WRITES_MEMBER} |
-| Explorer | ${label(m.e)} | native Codex subagent, fresh per option | its own worktree |
-
-${SAME_LAB}${SHARED_BULLETS}
-**Run folder per call:** \`cloop/runs/<call-id>/\` with \`packet.md\` and \`out.md\`. Use absolute paths and random call-ids, so no path a judge sees reveals who built what.
-
-${WORKTREE_BLOCK}
-**Every call:** native \`spawn_agent\` with the explicit model and reasoning effort from the table and \`fork_turns: "none"\`, with the message "Read <packet path> and follow it." Await it with native \`wait_agent(timeout_ms=1800000)\`, re-entering after every timeout until the terminal result; never end the turn to poll a running call. Save the terminal reply verbatim as \`out.md\`. Its packet names its worktree and forbids writes elsewhere; a judge's packet also forbids edits to tracked files. Members and explorers spawn nothing.
-
-**Execution:**
-- Launch all calls of a step in one turn and wait for every completion in that turn.
-- A call is complete only when it returned a terminal reply and \`out.md\` follows the format. ${FAILED_CALL}
-- After 30 minutes without a result, ask the call for a short status report and tell it to continue. No answer, or no change → close it; that is its one re-dispatch.
-${EXEC_TAIL}
-${PREFLIGHT_HEAD}- P1: native subagents spawn with an explicit model and reasoning effort.
-- P2: each role's model and effort are confirmed from the harness's record (the \`spawn_agent\` arguments and session log), never from the role's reply.
-${PREFLIGHT_TAIL}`;
-}
+const LABS_MAIN = "A council of two fresh, independent models from different labs (Member A and Member B)";
+const CALL = "`node cloop.mjs call <judge|member|explorer|dueler>` creates the call's id, packet folder and worktree.";
+const SAME_LAB = "- The two members are different models from the same lab; they may share blind spots, so every review names the nearest counterfeit with care.\n";
 
 function claudeAliases(rows) {
   const aliases = [];
@@ -160,26 +78,37 @@ function claudeAliases(rows) {
   return aliases.join(", ");
 }
 
+const table = (m) => `| Root | ${m.root} (recommended), this session | code, merges |
+| Member A (judge, loop-breaker) | ${label(m.a)} | its call's worktree |
+| Member B (judge, loop-breaker) | ${label(m.b)} | its call's worktree |
+| Explorer | ${label(m.e)} | its call's worktree |
+
+`;
+
+const ROLES_HEAD = `### ROLES AND INVOCATION
+
+The user fixes the model hierarchy for the task; it does not change during it.
+
+| Role | Model | Writes |
+|---|---|---|
+`;
+
+function rolesCodex(m) {
+  return `${ROLES_HEAD}${table(m)}${SAME_LAB}- ${CALL} Spawn it with native \`spawn_agent\`, the explicit model and reasoning effort from the table, \`fork_turns: "none"\`, message "Read <packet path> and follow it." Await it with \`wait_agent\`, re-entering after every timeout until the terminal reply. Save the reply verbatim as \`cloop/runs/<call-id>/out.md\`.
+`;
+}
+
 function rolesClaude(m) {
-  return `${ROLES_HEAD}| Root | ${m.root} (recommended) | this session | code, board, merges |
-| Member A (judge, dueler) | ${label(m.a)} | native Claude Code subagent, fresh per call | ${WRITES_MEMBER} |
-| Member B (judge, dueler) | ${label(m.b)} | native Claude Code subagent, fresh per call | ${WRITES_MEMBER} |
-| Explorer | ${label(m.e)} | native Claude Code subagent, fresh per option | its own worktree |
+  return `${ROLES_HEAD}${table(m)}${SAME_LAB}- ${CALL} Spawn it with Claude Code's native \`Agent\` tool, never as a fork (a fork runs on your model), with the explicit \`model\` (${claudeAliases([m.a, m.b, m.e])}) and \`effort\` from the table, prompted "Read <packet path> and follow it." Wait for its final reply in this turn. Save the reply verbatim as \`cloop/runs/<call-id>/out.md\`.
+`;
+}
 
-${SAME_LAB}${SHARED_BULLETS}
-**Run folder per call:** \`cloop/runs/<call-id>/\` with \`packet.md\` and \`out.md\`. Use absolute paths and random call-ids, so no path a judge sees reveals who built what.
+const CODEX_EXEC = "`codex exec -m <model> -c model_reasoning_effort=<effort> -s workspace-write -C \"<its worktree>\" --json -o \"$REPO/cloop/runs/<call-id>/out.md\" \"Read <packet path> and follow it.\" < /dev/null > \"$REPO/cloop/runs/<call-id>/events.jsonl\"`";
 
-${WORKTREE_BLOCK}
-**Every call:** Claude Code's native \`Agent\` tool, never as a fork (a fork runs on your model), with the explicit \`model\` (${claudeAliases([m.a, m.b, m.e])}) and \`effort\` from the table, prompted "Read <packet path> and follow it." Save its final reply verbatim as \`out.md\`. Follow-ups to an explorer go through \`SendMessage\` to the same subagent. Its packet names its worktree and forbids writes elsewhere; a judge's packet also forbids edits to tracked files. Members and explorers spawn nothing.
-
-**Execution:**
-- Launch all calls of a step in one message and wait for every result in that turn.
-- A call is complete only when it returned a final reply and \`out.md\` follows the format. ${FAILED_CALL}
-- After 30 minutes without a result, ask the call for a short status report and tell it to continue. No answer, or no change → stop it; that is its one re-dispatch.
-${EXEC_TAIL}
-${PREFLIGHT_HEAD}- P1: native subagents launch with an explicit model and effort.
-- P2: each role's model and effort are confirmed from the harness's record (the \`Agent\` call), never from the role's reply.
-${PREFLIGHT_TAIL}`;
+function rolesMain(m) {
+  return `${ROLES_HEAD}${table(m)}- The two members are different models from different labs: their findings complement each other.
+- ${CALL} Member A: Claude Code's native \`Agent\` tool, never as a fork (a fork runs on your model), with \`model\` ${claudeAliases([m.a])} and \`effort\` ${m.a[1]}, prompted "Read <packet path> and follow it."; save its final reply verbatim as \`cloop/runs/<call-id>/out.md\`. Member B and explorers: ${CODEX_EXEC}, with the model and effort from the table, run as background jobs and waited for in this turn; their model and effort are confirmed from \`events.jsonl\`. Before the first \`codex exec\`, confirm Codex is logged in and that no Codex instruction file it loads from the worktree up to the filesystem root holds an orchestration policy.
+`;
 }
 
 const RENDER = { main: rolesMain, codex: rolesCodex, claude: rolesClaude };
@@ -189,31 +118,26 @@ export function renderRoles(edition, profileId) {
 }
 
 // The Builders block appended to ROLES AND INVOCATION when --builders is cheap or cheap-100.
+const BUILDER_RUN = {
+  codex: () => "- Spawn each builder once per task with native `spawn_agent`, its own model and reasoning effort, inheriting the conversation; give later assignments as same-thread deltas, each with the worktree from `node cloop.mjs call dynamic|mechanical`.",
+  main: () => `- Each builder is one \`codex exec\` session for the whole task. First assignment: ${CODEX_EXEC} with its own model and effort, carrying the conversation packet; keep the \`thread_id\` from its \`thread.started\` event. Later assignments: \`codex exec resume <thread_id> --json -o "$REPO/cloop/runs/<call-id>/out.md" "Read <packet path> and follow it." < /dev/null > "$REPO/cloop/runs/<call-id>/events.jsonl"\`, with a delta packet naming the worktree from \`node cloop.mjs call dynamic|mechanical\`. Run both builders as background jobs and wait for both in this turn.`,
+  claude: (rows) => `- Spawn each builder once per task with the native \`Agent\` tool, never as a fork, with its \`model\` (${claudeAliases(rows)}) and \`effort\`, seeded with the conversation packet; continue it only through \`SendMessage\` with deltas, each naming the worktree from \`node cloop.mjs call dynamic|mechanical\`.`,
+};
+
 export function renderBuilders(edition, builderId, vendor) {
   const rows = vendor.profiles[builderId];
   const src = vendor.source;
   const d = [rows.dynamic.model, rows.dynamic.effort];
   const k = [rows.mechanical.model, rows.mechanical.effort];
-  const runAs = {
-    main: "`codex exec`, fresh per build step",
-    codex: "native Codex subagent, fresh per build step",
-    claude: "native Claude Code subagent, fresh per build step",
-  }[edition];
-  const how =
-    edition === "main"
-      ? "Run each builder with the Member B command, its own `-m <model> -c model_reasoning_effort=<effort>`, and a worktree of BEST."
-      : edition === "codex"
-        ? "Spawn each builder like a member, with its own model and reasoning effort, in a worktree of BEST."
-        : `Launch each builder like a member, with its own \`model\` (${claudeAliases([d, k])}) and \`effort\`, in a worktree of BEST.`;
   return `
 **Builders** (\`--builders ${builderId}\`: cheapGPT ${src.version}, \`${src.edition}\` edition; the BUILDERS section applies):
 
-| Builder | Model | Run as | Writes |
-|---|---|---|---|
-| Dynamic | ${label(d)} | ${runAs} | its own worktree of BEST |
-| Mechanical | ${label(k)} | ${runAs} | its own worktree of BEST |
+| Builder | Model | Writes |
+|---|---|---|
+| Dynamic | ${label(d)} | its call's worktree of BEST |
+| Mechanical | ${label(k)} | its call's worktree of BEST |
 
-${how}
+${BUILDER_RUN[edition]([d, k])}
 `;
 }
 
@@ -253,10 +177,10 @@ export function parseTxt(raw) {
 }
 
 function rolesSpan(body) {
-  const start = body.indexOf("\n## ROLES AND INVOCATION\n");
-  if (start < 0 || countOf(body, "\n## ROLES AND INVOCATION\n") !== 1) fail("the main prompt must contain exactly one '## ROLES AND INVOCATION' section");
-  const next = body.indexOf("\n## ", start + 1);
-  if (next < 0) fail("'## ROLES AND INVOCATION' must be followed by another '## ' section");
+  const start = body.indexOf("\n### ROLES AND INVOCATION\n");
+  if (start < 0 || countOf(body, "\n### ROLES AND INVOCATION\n") !== 1) fail("the main prompt must contain exactly one '### ROLES AND INVOCATION' subsection");
+  const next = body.indexOf("\n### ", start + 1);
+  if (next < 0) fail("'### ROLES AND INVOCATION' must be followed by another '### ' subsection");
   return { start: start + 1, end: next + 1 };
 }
 
@@ -264,19 +188,19 @@ export function buildProfile(parsed, edition, profileId, builderId = "none", ven
   const { body } = parsed;
   const span = rolesSpan(body);
   const txtRoles = body.slice(span.start, span.end);
-  const expected = renderRoles("main", "town") + "\n";
+  const expected = renderRoles(SOURCE_EDITION, "town") + "\n";
   if (txtRoles !== expected) {
-    fail("the txt's ROLES AND INVOCATION section differs from the main/town template in tools/release.mjs. Update the templates to match the txt, then rerun.");
+    fail("the txt's ROLES AND INVOCATION subsection differs from the codex/town template in tools/release.mjs. Update the template to match the txt, then rerun.");
   }
-  if (!body.includes("\n## BUILDERS\n")) fail("the main prompt must contain a '## BUILDERS' section");
-  if (countOf(body, INTRO_TOWN_MAIN) !== 1) fail(`the intro sentence must appear exactly once: ${INTRO_TOWN_MAIN}`);
-  if (countOf(body, LABS_MAIN) !== 1) fail(`the council sentence must appear exactly once: ${LABS_MAIN}`);
+  if (!body.includes("\n### BUILDERS\n")) fail("the main prompt must contain a '### BUILDERS' subsection");
+  if (countOf(body, INTRO_TOWN) !== 1) fail(`the intro sentence must appear exactly once: ${INTRO_TOWN}`);
+  if (countOf(body, LABS_SAME) !== 1) fail(`the council sentence must appear exactly once: ${LABS_SAME}`);
   let roles = renderRoles(edition, profileId);
   if (builderId !== "none") roles += renderBuilders(edition, builderId, vendor);
   let out = body.slice(0, span.start) + roles + "\n" + body.slice(span.end);
   out = out.replace("PROFILE: town\n", `PROFILE: ${profileId}\n`);
-  if (edition === "codex") out = out.replace(INTRO_TOWN_MAIN, INTRO_TOWN_MAIN.replace("a Claude Code session", "a Codex session"));
-  if (edition !== "main") out = out.replace(LABS_MAIN, LABS_SAME);
+  if (edition !== "codex") out = out.replace(INTRO_TOWN, INTRO_TOWN.replace("a Codex session", "a Claude Code session"));
+  if (edition === "main") out = out.replace(LABS_SAME, LABS_MAIN);
   return out + "\n";
 }
 
