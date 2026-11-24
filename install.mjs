@@ -6,6 +6,7 @@ import {
   copyFile,
   mkdir,
   readFile,
+  readdir,
   rename,
   rm,
   writeFile,
@@ -14,7 +15,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { cheapgptMessage, detectCheapgpt } from "./cheapgpt-guard.mjs";
 
-export const PACKAGE_VERSION = "1.1.0";
+export const PACKAGE_VERSION = "1.2.0";
 export const SCHEMA_VERSION = 1;
 export const START_MARKER = "<!-- cloop:managed:start -->";
 export const END_MARKER = "<!-- cloop:managed:end -->";
@@ -32,7 +33,7 @@ const PROFILE_ALIASES = {
   "high-council": "high",
 };
 export const BUILDER_IDS = ["none", "cheap", "cheap-100"];
-export const TOOL_NAME = "cloop.mjs"; // the flow tool the profiles run, installed at the project root
+export const TOOL_NAME = "cloop.mjs"; // the engine the profiles run, installed at .cloop/ with flow.json and cards/
 
 export class CloopError extends Error {
   constructor(message, code = "CLOOP") {
@@ -216,7 +217,8 @@ function projectPaths(projectRoot) {
     hooksDir: path.join(projectRoot, ".claude", "hooks"),
     hooksJson: path.join(projectRoot, ".claude", "settings.json"), // Claude Code settings file holding the hooks key
     hookScript: path.join(projectRoot, ".claude", "hooks", HOOK_SCRIPT_NAME),
-    tool: path.join(projectRoot, TOOL_NAME),
+    tool: path.join(projectRoot, ".cloop", TOOL_NAME),
+    legacyTool: path.join(projectRoot, TOOL_NAME), // 1.1.0 installed the engine at the project root
   };
 }
 
@@ -369,6 +371,28 @@ export function cloopHookCount(hooksJson) {
     heartbeat: count("UserPromptSubmit", "heartbeat"),
     recovery: count("SessionStart", "recovery"),
   };
+}
+
+async function engineFiles(root) { // the engine's files, relative to .cloop/: the engine, its flow and its cards
+  const dir = path.join(root, "cards");
+  const cards = existsSync(dir) ? (await readdir(dir)).filter((f) => f.endsWith(".md")).sort().map((f) => `cards/${f}`) : [];
+  return [TOOL_NAME, "flow.json", ...cards];
+}
+
+async function installEngine(paths) {
+  await rm(path.join(paths.stateDir, "cards"), { recursive: true, force: true });
+  await mkdir(path.join(paths.stateDir, "cards"), { recursive: true });
+  for (const f of await engineFiles(HERE)) await copyFile(path.join(HERE, f), path.join(paths.stateDir, f));
+}
+
+async function removeEngine(paths) {
+  for (const f of [TOOL_NAME, "flow.json"]) await rm(path.join(paths.stateDir, f), { force: true });
+  await rm(path.join(paths.stateDir, "cards"), { recursive: true, force: true });
+}
+
+async function removeLegacyTool(paths) { // only the file cLoop 1.1.0 wrote, recognised by its header
+  const text = await readTextIfExists(paths.legacyTool);
+  if (text != null && text.includes("// cLoop tool: the flow, the escalation ladder")) await rm(paths.legacyTool, { force: true });
 }
 
 function snapshotFile(filePath, contents) {
@@ -639,7 +663,7 @@ async function writeInstallation({
     instructionFile: INSTRUCTION_FILE,
     hookMode,
     managedBlockSha256: nextState.managedBlockSha256,
-    writes: [INSTRUCTION_FILE, ".cloop/state.json", TOOL_NAME],
+    writes: [INSTRUCTION_FILE, ".cloop/state.json", `.cloop/${TOOL_NAME}`, ".cloop/flow.json", ".cloop/cards/"],
   };
   if (hookMode === HOOK_MODE) {
     planned.writes.push(".claude/settings.json", `.claude/hooks/${HOOK_SCRIPT_NAME}`);
@@ -666,7 +690,8 @@ async function writeInstallation({
   try {
     await atomicWrite(paths.agents, nextAgents);
     await maybeFail("agents");
-    await copyFile(path.join(HERE, TOOL_NAME), paths.tool);
+    await installEngine(paths);
+    await removeLegacyTool(paths);
     if (hookMode === HOOK_MODE) {
       await mkdir(paths.hooksDir, { recursive: true });
       await copyFile(hookSource, paths.hookScript);
@@ -786,7 +811,7 @@ async function cmdUninstall(args) {
     removes: [".cloop/state.json"],
     writes: [],
   };
-  if (existsSync(paths.tool)) planned.removes.push(TOOL_NAME);
+  if (existsSync(paths.tool)) planned.removes.push(`.cloop/${TOOL_NAME}`, ".cloop/flow.json", ".cloop/cards/");
   if (inspect.hasAgents) planned.writes.push(INSTRUCTION_FILE);
   if (inspect.hasHookScript) planned.removes.push(`.claude/hooks/${HOOK_SCRIPT_NAME}`);
   if (inspect.hasHooksJson || inspect.state?.codexPermission) planned.writes.push(".claude/settings.json");
@@ -807,7 +832,8 @@ async function cmdUninstall(args) {
   ];
 
   try {
-    await rm(paths.tool, { force: true });
+    await removeEngine(paths);
+    await removeLegacyTool(paths);
     if (nextAgents == null || nextAgents.trim() === "") {
       if (inspect.hasAgents) await rm(paths.agents, { force: true });
     } else {
@@ -953,12 +979,16 @@ export async function doctorProject(projectRoot, sourceRoot = HERE) {
   if (cheapgpt.found.length) {
     issues.push(`cheapGPT is installed here too (${cheapgpt.found.join("; ")}); keep one package: remove cheapGPT with its own uninstaller, or uninstall cLoop`);
   }
-  const installedTool = await readTextIfExists(paths.tool);
-  if (installedTool == null) issues.push(`missing ${TOOL_NAME} at the project root`);
-  else {
-    const expectedTool = await readTextIfExists(path.join(sourceRoot, TOOL_NAME));
-    if (expectedTool != null && sha256(installedTool.replace(/\r\n/g, "\n")) !== sha256(expectedTool.replace(/\r\n/g, "\n"))) warnings.push(`installed ${TOOL_NAME} does not match current sources; run update`);
+  const expected = await engineFiles(sourceRoot);
+  for (const f of expected) {
+    const installed = await readTextIfExists(path.join(paths.stateDir, f));
+    if (installed == null) { issues.push(`missing .cloop/${f}`); continue; }
+    const source = await readTextIfExists(path.join(sourceRoot, f));
+    if (source != null && sha256(installed.replace(/\r\n/g, "\n")) !== sha256(source.replace(/\r\n/g, "\n"))) warnings.push(`installed .cloop/${f} does not match current sources; run update`);
   }
+  for (const f of await engineFiles(paths.stateDir)) if (!expected.includes(f)) warnings.push(`.cloop/${f} is not in current sources; run update`);
+  if (await readTextIfExists(paths.legacyTool) != null) warnings.push(`${TOOL_NAME} at the project root is left from cLoop 1.1.0; run update to remove it`);
+
   for (let dir = path.dirname(path.resolve(projectRoot)); ; dir = path.dirname(dir)) {
     const text = await readTextIfExists(path.join(dir, "AGENTS.md"));
     if (text != null && (text.includes(START_MARKER) || text.includes("cheapgpt:managed"))) {

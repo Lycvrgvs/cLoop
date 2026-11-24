@@ -7,7 +7,7 @@
 // Output: town.md and high.md (no builders), plus town.cheap.md, town.cheap-100.md, high.cheap.md and
 // high.cheap-100.md, which add a Builders block from vendor/cheapgpt-builders.json (written by
 // tools/sync-builders.mjs). From 1.1.0 the txt is the mono-agent Town Council prompt, written for the codex
-// edition (Codex root, native Codex subagents) and run with the flow tool cloop.mjs. Every edition is
+// edition (Codex root, native Codex subagents) and run with the engine .cloop/cloop.mjs (its flow.json and cards). Every edition is
 // derived from it here: only the intro's harness, the council sentence and the ROLES AND INVOCATION
 // subsection (and the Builders block) differ.
 // The tool refuses to run when the txt's ROLES AND INVOCATION section or intro no longer match the
@@ -64,7 +64,7 @@ const SOURCE_EDITION = "codex";
 const INTRO_TOWN = "You are the cLoop root (the c stands for council): a Codex session that owns a task from goals to release, with the user in the loop.";
 const LABS_SAME = "A council of two fresh, independent models (Member A and Member B)";
 const LABS_MAIN = "A council of two fresh, independent models from different labs (Member A and Member B)";
-const CALL = "`node cloop.mjs call <judge|member|explorer|dueler>` creates the call's id, packet folder and worktree.";
+const CALL = "`node .cloop/cloop.mjs call <judge|member|explorer|dueler>` creates the call's id, worktree and packet, opened with the role's card; append the assignment.";
 const SAME_LAB = "- The two members are different models from the same lab; they may share blind spots, so every review names the nearest counterfeit with care.\n";
 
 function claudeAliases(rows) {
@@ -119,9 +119,9 @@ export function renderRoles(edition, profileId) {
 
 // The Builders block appended to ROLES AND INVOCATION when --builders is cheap or cheap-100.
 const BUILDER_RUN = {
-  codex: () => "- Spawn each builder once per task with native `spawn_agent`, its own model and reasoning effort, inheriting the conversation; give later assignments as same-thread deltas, each with the worktree from `node cloop.mjs call dynamic|mechanical`.",
-  main: () => `- Each builder is one \`codex exec\` session for the whole task. First assignment: ${CODEX_EXEC} with its own model and effort, carrying the conversation packet; keep the \`thread_id\` from its \`thread.started\` event. Later assignments: \`codex exec resume <thread_id> --json -o "$REPO/cloop/runs/<call-id>/out.md" "Read <packet path> and follow it." < /dev/null > "$REPO/cloop/runs/<call-id>/events.jsonl"\`, with a delta packet naming the worktree from \`node cloop.mjs call dynamic|mechanical\`. Run both builders as background jobs and wait for both in this turn.`,
-  claude: (rows) => `- Spawn each builder once per task with the native \`Agent\` tool, never as a fork, with its \`model\` (${claudeAliases(rows)}) and \`effort\`, seeded with the conversation packet; continue it only through \`SendMessage\` with deltas, each naming the worktree from \`node cloop.mjs call dynamic|mechanical\`.`,
+  codex: () => "- Spawn each builder once per task with native `spawn_agent`, its own model and reasoning effort, inheriting the conversation; give later assignments as same-thread deltas, each with the worktree from `node .cloop/cloop.mjs call dynamic|mechanical`.",
+  main: () => `- Each builder is one \`codex exec\` session for the whole task. First assignment: ${CODEX_EXEC} with its own model and effort, carrying the conversation packet; keep the \`thread_id\` from its \`thread.started\` event. Later assignments: \`codex exec resume <thread_id> --json -o "$REPO/cloop/runs/<call-id>/out.md" "Read <packet path> and follow it." < /dev/null > "$REPO/cloop/runs/<call-id>/events.jsonl"\`, with a delta packet naming the worktree from \`node .cloop/cloop.mjs call dynamic|mechanical\`. Run both builders as background jobs and wait for both in this turn.`,
+  claude: (rows) => `- Spawn each builder once per task with the native \`Agent\` tool, never as a fork, with its \`model\` (${claudeAliases(rows)}) and \`effort\`, seeded with the conversation packet; continue it only through \`SendMessage\` with deltas, each naming the worktree from \`node .cloop/cloop.mjs call dynamic|mechanical\`.`,
 };
 
 export function renderBuilders(edition, builderId, vendor) {

@@ -6,15 +6,74 @@ You state the goal. A council of two independent models helps turn it into a rub
 
 This `main` branch runs the root in **Claude Code**. Member A is a native Claude Code subagent; Member B, the explorers and the builders are **Codex CLI** sessions (`codex exec`) that the root launches directly. Two labs on one council, so their findings complement each other.
 
-## What is new in 1.1.0: a decidable architecture
+## What is new in 1.2.0: cards, and the flow as data
 
-Every step of cLoop is now decidable, and each decision has one owner:
+1.1.0 made every step decidable: code enforces what can be computed, the model judges what needs judgment, and your decisions stay yours. 1.2.0 finishes that split by moving every instruction out of the code:
 
-- **What can be computed is enforced by code.** A small tool, `cloop.mjs` (Node, standard library only, installed at the project root), holds the flow: the states and their transitions, the evidence each exit needs, the council's outcome, BEST (the commit everything builds from, which only moves forward), the escalation ladder, the rubric's format and freeze, and the gates' preconditions. The agent cannot skip a step, invent an outcome or move the finish line: the tool refuses and says what is missing.
-- **What needs judgment is guided by principles, not scripts.** The prompt keeps only what code cannot decide: the step back, causes, tagging, merges, quality and taste, under five laws, a few vetoes and the cues that trigger them. Each state's instructions are printed by the tool when the state is entered, so the prompt stays small (about 12 KB, down from 37 KB) and every instruction is read when it applies.
-- **What belongs to you stays yours.** Goals, any change to an approved or frozen finish line, a re-plan when a failure resists the loop-breakers, and acceptance are your decisions, asked with options and a recommendation while the agent keeps working on the rest.
+- **The flow is data.** `flow.json` holds the states, the allowed transitions, the evidence each exit needs (named guards), which command runs in which state, the escalation ladder and which card binds where. The engine, `cloop.mjs`, interprets it; the diagram below is generated from it, and a test fails when they differ.
+- **Instructions are cards.** Each state's steps and each sub-agent's brief live in `cards/*.md`, small Markdown files with a header saying where they bind. `status` prints the cards for the current state; every call writes its role's card at the top of the packet it hands the model. The main prompt keeps the big picture (flow, laws, vetoes, signals) and an index of the cards.
+- **Fewer, better guards.** Every refusal was audited: duplicates merged, text-length minimums and the PREFLIGHT claims removed, and every refusal now names what is missing and the command that provides it. A reproduced violation is now a run the engine makes itself, not a report of one.
+- **Signals computed from the record.** `status` and `report` point out the same criterion failing again, a failure returning after it was established, a diff growing while nothing is established, and checks green while the real run fails. They inform and never block.
+- **The explore choice is judged, not counted.** The engine computes which options are eligible; the root chooses by the merge guideline; an amalgam is judged again.
 
-For you this means runs that follow the method instead of drifting from it, evidence you can check (`cloop/log.jsonl`, `cloop/board.md`, `node cloop.mjs report`), and fewer tokens spent on instructions the model would otherwise re-read and re-interpret on every turn.
+For you this means a shorter prompt the model reads in full, instructions that arrive exactly when they apply, and a flow you can read, diagram and change without touching code. The engine is installed with its flow and cards under `.cloop/`.
+
+## How it works
+
+<!-- flow:start (generated from flow.json by tools/flow-diagram.mjs; do not edit) -->
+```mermaid
+flowchart LR
+  ADOPT --> DEFINE
+  ADOPT --> EXPLORE
+  ADOPT --> ONESHOT
+  ADOPT --> LOOP
+  DEFINE --> EXPLORE
+  DEFINE --> ONESHOT
+  DEFINE --> LOOP
+  DEFINE --> DUEL
+  DEFINE --> GATE
+  EXPLORE --> LOOP
+  EXPLORE --> GATE
+  EXPLORE --> DUEL
+  EXPLORE --> ASK
+  ONESHOT --> LOOP
+  ONESHOT --> GATE
+  ONESHOT --> DUEL
+  ONESHOT --> ASK
+  LOOP --> LOOP
+  LOOP --> GATE
+  LOOP --> DUEL
+  LOOP --> ASK
+  DUEL --> LOOP
+  DUEL --> GATE
+  DUEL --> DUEL
+  DUEL --> ASK
+  GATE --> ONESHOT
+  GATE --> LOOP
+  GATE --> DUEL
+  GATE --> ACCEPT
+  GATE --> ASK
+  ASK --> DEFINE
+  ASK --> EXPLORE
+  ASK --> STOPPED
+  ACCEPT --> DONE
+  ACCEPT --> DEFINE
+  ACCEPT --> EXPLORE
+  subgraph ladder [the ladder: rungs and the state each leads to]
+    direction LR
+    small["small (LOOP)"]
+    full["full (DUEL)"]
+    redefine["redefine (ASK)"]
+    small -->|3rd ADVANCED, 2nd STALLED, 2nd REGRESSION| full
+    full -->|ADVANCED| small
+    full -->|2nd STALLED, 2nd REGRESSION| redefine
+    redefine -->|ADVANCED| small
+    full -->|PASS| small
+    redefine -->|PASS| small
+    blocked((BLOCKED)) --> redefine
+  end
+```
+<!-- flow:end -->
 
 ## Why cLoop
 
@@ -33,7 +92,7 @@ ROUTE    DIRECT (one local edit) | FOCUSED: DEFINE → CLIMB | FULL: DEFINE → 
 ADOPT    an existing project is adopted first: keep, simplify or replace, with you
 DEFINE   goals with you → both members draft the rubric → CORE / NON-CORE → freeze
          (provisional until the first council, then frozen hard; changes need your words)
-EXPLORE  2–4 parallel single-file one-shots, judged blind, ranked by the tool, merged
+EXPLORE  2–4 parallel single-file one-shots, judged blind; the engine computes the eligible; the root chooses
 CLIMB    CORE stage, then NON-CORE stage; each = PREVENT → one-shot → small loops → gate
 ACCEPT   the release gate passed: you accept, or your feedback goes back to DEFINE or EXPLORE
 
@@ -42,7 +101,7 @@ LADDER   small: your step back + a small loop      (3rd ADVANCED, 2nd STALLED or
          re-define: your comment → their re-plan → your approval   (ADVANCED → small)
 ```
 
-Outcomes are PASS, ADVANCED, STALLED, REGRESSION or BLOCKED, computed by the tool. After every judging the root sends you `node cloop.mjs report` and keeps working.
+Outcomes are PASS, ADVANCED, STALLED, REGRESSION or BLOCKED, computed by the engine. After every judging the root sends you `node .cloop/cloop.mjs report` and keeps working.
 
 ## Profiles
 
@@ -61,7 +120,7 @@ Install **exactly one** profile per project. Member A and Member B judge every l
 | `codex` | Codex | native Codex subagents |
 | `claude` | Claude Code | native Claude Code subagents |
 
-Every branch carries the same method and the same `cloop.mjs` at 1.1.0. Only the roles subsection of the profile, the installer target and the builders' invocation differ.
+Every branch carries the same method, engine, flow and cards at 1.2.0. Only the roles subsection of the profile, the installer target and the builders' invocation differ.
 
 ## For AI coding agents (Claude Code, Codex, Cursor, OpenCode)
 
@@ -81,7 +140,7 @@ node /path/to/cLoop/install.mjs install --project . --profile town
 
 ## Install / update / doctor / uninstall
 
-In an existing project, the first FOCUSED or FULL task starts with ADOPTION: `node cloop.mjs init` detects the project and enters ADOPT, so the rubric, the spec and the architecture exist before feature work. `doctor` checks that the installed `cloop.mjs` matches this checkout.
+In an existing project, the first FOCUSED or FULL task starts with ADOPTION: `node .cloop/cloop.mjs init` detects the project and enters ADOPT, so the rubric, the spec and the architecture exist before feature work. `doctor` checks that the installed engine, flow and cards match this checkout.
 
 ```bash
 node /path/to/cLoop/install.mjs install --project . --profile town
@@ -102,7 +161,9 @@ Flags: `--dry-run`, `--force` (overwrite a hand-edited cLoop block), `--json`, `
 
 ```text
 CLAUDE.md                        # bounded cLoop block appended or replaced
-cloop.mjs                        # the flow tool the policy runs (node cloop.mjs status)
+.cloop/cloop.mjs                 # the engine the policy runs (node .cloop/cloop.mjs status)
+.cloop/flow.json                 # the flow it interprets
+.cloop/cards/                    # the cards it binds to states and roles
 .cloop/state.json                # profile, hashes, hook mode
 .claude/settings.json            # cLoop hook entries and the codex exec permission; other keys kept
 .claude/hooks/cloop-turn.mjs     # heartbeat (UserPromptSubmit) + short compact reminder (SessionStart: compact)
@@ -110,11 +171,11 @@ cloop.mjs                        # the flow tool the policy runs (node cloop.mjs
 
 Claude Code re-reads the project-root `CLAUDE.md` after compaction, so the compact hook injects only the turn reminder, never the whole block. Everything outside the `<!-- cloop:managed:start -->` / `<!-- cloop:managed:end -->` markers stays yours; `uninstall` removes only cLoop files.
 
-While a task runs, `cloop.mjs` keeps `cloop/state.json`, `cloop/log.jsonl` (every card, run, call, judging, step back and transition) and the rendered `cloop/board.md`; calls live in `cloop/runs/` and `cloop/wt/`, scratch in `temporary/`. All are git-excluded; `node cloop.mjs clean` removes the call folders, worktrees and scratch after DONE and keeps the state, log and board. Three files are permanent and committed: `cloop/rubric.md`, `cloop/spec.md` and `cloop/architecture.md`. Where the sandbox keeps `.git` read-only, `init` keeps the repository in `cloop/git`, with its history; run git through `node cloop.mjs git <args>`.
+While a task runs, the engine keeps `cloop/state.json`, `cloop/log.jsonl` (every run, call, judging, step back and transition) and the rendered `cloop/board.md`; calls live in `cloop/runs/` and `cloop/wt/`, scratch in `temporary/`. All are git-excluded; `node .cloop/cloop.mjs clean` removes the call folders, worktrees and scratch after DONE and keeps the state, log and board. Three files are permanent and committed: `cloop/rubric.md`, `cloop/spec.md` and `cloop/architecture.md`. Where the sandbox keeps `.git` read-only, `init` keeps the repository in `cloop/git`, with its history; run git through `node .cloop/cloop.mjs git <args>`.
 
 ## cheapGPT builders (`--builders`)
 
-cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed in the same project. To get cheapGPT's economical builders, install cLoop with `--builders cheap` or `--builders cheap-100`. The builders then take only the build steps (each one-shot file and each small loop's build): each is one `codex exec` session for the whole task (first call, then `codex exec resume <thread_id>` with a delta), seeded with a conversation packet, and takes every assignment in its own worktree of BEST (`node cloop.mjs call dynamic|mechanical`); the root allocates by whether the handoff can state the exact result, merges, and runs the real path before the council. The root keeps everything else, and the council never changes. Pick the builders separately from `town` or `high`.
+cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed in the same project. To get cheapGPT's economical builders, install cLoop with `--builders cheap` or `--builders cheap-100`. The builders then take only the build steps (each one-shot file and each small loop's build): each is one `codex exec` session for the whole task (first call, then `codex exec resume <thread_id>` with a delta), seeded with a conversation packet, and takes every assignment in its own worktree of BEST (`node .cloop/cloop.mjs call dynamic|mechanical`, whose packet carries the builder's card); the root allocates by whether the handoff can state the exact result, merges, and runs the real path before the council. The root keeps everything else, and the council never changes. Pick the builders separately from `town` or `high`.
 
 | Option | Dynamic builder | Mechanical builder |
 | --- | --- | --- |
@@ -122,7 +183,7 @@ cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed i
 | `--builders cheap` | gpt-6.1-terra medium | gpt-6-luna max |
 | `--builders cheap-100` | gpt-6.1-terra max | gpt-6-luna max |
 
-The rows come from cheapGPT 1.9.0's published `profiles/roles.json` (the `exp` edition), copied into `vendor/cheapgpt-builders.json` at release time. Nothing is fetched at install.
+The rows come from cheapGPT 1.10.0's published `profiles/roles.json` (the `exp` edition), copied into `vendor/cheapgpt-builders.json` at release time. Nothing is fetched at install.
 
 ```bash
 node /path/to/cLoop/install.mjs install --project . --profile town --builders cheap
@@ -134,7 +195,8 @@ node /path/to/cLoop/install.mjs update --project . --builders none   # back to r
 ## Tests
 
 ```bash
-node --test test/installer.test.mjs
+node --test test/*.mjs
+node tools/flow-diagram.mjs --check   # the README diagram matches flow.json
 ```
 
 ## Releasing
@@ -144,16 +206,19 @@ Profiles are generated, never edited by hand. To release a new prompt, on each b
 ```bash
 node tools/sync-builders.mjs --roles /path/to/cheapGPT/profiles/roles.json --commit <cheapGPT sha>
 node tools/release.mjs --txt /path/to/cloop-town.txt --version X.Y.Z
-node --test test/installer.test.mjs
+node tools/flow-diagram.mjs
+node --test test/*.mjs
 ```
 
-`sync-builders` copies the builder rows from cheapGPT's published roles table, checked out at a pinned commit of the paired edition. `release` then derives the six profiles for this branch's edition (`town`, `high`, each with builders `none`, `cheap` and `cheap-100`) from the Town Council source prompt, the mono-agent `cloop-town.txt`. It refuses to run if the prompt's roles subsection or intro no longer match its template. Copy the released `cloop.mjs` next to `install.mjs`; the installer ships that file.
+`sync-builders` copies the builder rows from cheapGPT's published roles table, checked out at a pinned commit of the paired edition. `release` then derives the six profiles for this branch's edition (`town`, `high`, each with builders `none`, `cheap` and `cheap-100`) from the Town Council source prompt, the mono-agent `cloop-town.txt`. It refuses to run if the prompt's roles subsection or intro no longer match its template. Keep the released `cloop.mjs`, `flow.json` and `cards/` next to `install.mjs`; the installer ships them to `.cloop/`.
 
 ## Layout
 
 ```text
 install.mjs              zero-dependency installer
-cloop.mjs                the flow tool, copied into each target project's root
+cloop.mjs                the engine: runs flow.json, binds the cards, enforces the guards
+flow.json                states, transitions, guards, commands, ladder and card bindings
+cards/*.md               the instructions for each state and each sub-agent
 profiles/town.md         Town Council policy (generated)
 profiles/high.md         High Council policy (generated)
 profiles/*.cheap*.md     the same policies with a Builders block (generated)
@@ -161,7 +226,9 @@ profiles/catalog.json    profile metadata and turn reminders (generated)
 hooks/cloop-turn.mjs     copied into each target project's .claude/hooks/
 tools/release.mjs        profile generator for releases
 tools/sync-builders.mjs  copies cheapGPT's builder rows into vendor/
+tools/flow-diagram.mjs   writes the README diagram from flow.json
 vendor/cheapgpt-builders.json  vendored builder rows and their cheapGPT source
 cheapgpt-guard.mjs       stops install and update when cheapGPT is installed
-test/installer.test.mjs
+test/installer.test.mjs  the installer
+test/repo.test.mjs       flow.json, the cards, the README diagram and the engine
 ```
