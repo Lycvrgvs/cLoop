@@ -52,7 +52,7 @@ function heartbeatContext(state, event) {
   const lines = [
     `CLOOP HEARTBEAT: hook executed for current turn_id=${id}. CLOOP ACTIVE: profile=${state.profile} preferred_root="${state.root}" council="${state.council}" explorer="${state.explorer}" builders="${state.builders || "none"}" sha=${sha}. Apply the repository cLoop orchestration policy to this turn. If the current managed block is unavailable in active context, recover it from AGENTS.md before planning, delegation, or implementation. If asked whether the cLoop hook executed for this turn, this heartbeat is direct runtime evidence. Confirm it without falling back to "I cannot verify whether Codex ran the hook."`,
     state.planningMode,
-    "Default this turn: state the route line first (DIRECT / FOCUSED / FULL) unless the user overrode; if cloop/state.json exists for this task, run node cloop.mjs status and continue from its NEXT lines; otherwise FOCUSED and FULL start with node cloop.mjs init.",
+    "Default this turn: state the route line first (DIRECT / FOCUSED / FULL) unless the user overrode; if cloop/state.json exists for this task, run node .cloop/cloop.mjs status and continue from its NEXT lines; otherwise FOCUSED and FULL start with node .cloop/cloop.mjs init.",
   ];
   if (model) {
     lines.push(
@@ -67,7 +67,7 @@ function recoveryContext(state, block) {
     "CLOOP RECOVERY: SessionStart source=compact succeeded. Rehydrate and follow this exact managed cLoop policy before planning, delegation, or implementation.",
     block,
     state.planningMode,
-    "Default after recovery: run node cloop.mjs status and continue from its NEXT lines; if the current task has no cloop/state.json, state the route line first and start FOCUSED or FULL with node cloop.mjs init.",
+    "Default after recovery: run node .cloop/cloop.mjs status and continue from its NEXT lines; if the current task has no cloop/state.json, state the route line first and start FOCUSED or FULL with node .cloop/cloop.mjs init.",
   ];
   return parts.filter(Boolean).join("\n\n");
 }

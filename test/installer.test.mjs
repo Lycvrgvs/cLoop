@@ -64,7 +64,10 @@ test("empty repository install creates AGENTS.md, one block, state, and doctor p
     const region = extractManagedRegion(agents);
     assert.equal(state.managedBlockSha256, sha256(region.block));
     assert.equal(existsSync(path.join(dir, ".codex", "hooks", "cloop-turn.mjs")), true);
-    assert.equal(await readFile(path.join(dir, "cloop.mjs"), "utf8"), await readFile(path.join(ROOT, "cloop.mjs"), "utf8"));
+    assert.equal(await readFile(path.join(dir, ".cloop", "cloop.mjs"), "utf8"), await readFile(path.join(ROOT, "cloop.mjs"), "utf8"));
+    assert.equal(await readFile(path.join(dir, ".cloop", "flow.json"), "utf8"), await readFile(path.join(ROOT, "flow.json"), "utf8"));
+    assert.equal(await readFile(path.join(dir, ".cloop", "cards", "loop.md"), "utf8"), await readFile(path.join(ROOT, "cards", "loop.md"), "utf8"));
+    assert.equal(existsSync(path.join(dir, "cloop.mjs")), false);
     const toml = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
     assert.match(toml, /\[features\.multi_agent_v2\]/);
     assert.match(toml, /default_wait_timeout_ms = 1800000/);
@@ -204,7 +207,8 @@ test("uninstall removes cLoop files and preserves user instructions", async () =
     assert.equal(agents.includes(START_MARKER), false);
     assert.equal(existsSync(path.join(dir, ".cloop", "state.json")), false);
     assert.equal(existsSync(path.join(dir, ".codex", "hooks", "cloop-turn.mjs")), false);
-    assert.equal(existsSync(path.join(dir, "cloop.mjs")), false);
+    assert.equal(existsSync(path.join(dir, ".cloop", "cloop.mjs")), false);
+    assert.equal(existsSync(path.join(dir, ".cloop", "cards")), false);
     const hooksRaw = await readFile(path.join(dir, ".codex", "hooks.json"), "utf8").catch(() => "{}");
     const counts = cloopHookCount(hooksRaw);
     assert.equal(counts.heartbeat, 0);
@@ -408,7 +412,7 @@ test("profiles keep the cLoop structure and carry no harness setup text", async 
   for (const id of ["town", "high"]) {
     const text = await readFile(path.join(ROOT, "profiles", `${id}.md`), "utf8");
     assert.match(text, new RegExp(`^PROFILE: ${id}\nISSUE_REPO: Lycvrgvs/cLoop\n`));
-    for (const need of [/the c stands for council/, /## FLOW/, /END_FLOW/, /## MECHANICS/, /### ROLES AND INVOCATION/, /### THE COUNCIL/, /### BUILDERS/, /### THE STEP BACK/, /### REPORTING/, /END_MECHANICS/, /## LAWS/, /## NOISE_VETO/, /## SIGNALS/, /END_SIGNALS/, /node cloop\.mjs status/]) assert.match(text, need);
+    for (const need of [/the c stands for council/, /## FLOW/, /END_FLOW/, /## MECHANICS/, /### ROLES AND INVOCATION/, /### THE COUNCIL/, /### BUILDERS/, /### CARDS/, /### REPORTING AND FILES/, /END_MECHANICS/, /## LAWS/, /## NOISE_VETO/, /## SIGNALS/, /END_SIGNALS/, /node \.cloop\/cloop\.mjs status/]) assert.match(text, need);
     for (const bad of [/^# MAIN PROMPT/m, /^# TURN REMINDER/m, /^# TEST PLAN/m, /═══/]) assert.doesNotMatch(text, bad);
   }
   const { readdir } = await import("node:fs/promises");
@@ -727,7 +731,7 @@ test("first install recommends an ADOPTION task until a rubric exists", async ()
 
 test("the turn hook sends the root to the flow tool's status, on every turn and after compaction", async () => {
   const hook = await readFile(HOOK, "utf8");
-  assert.equal(hook.split("run node cloop.mjs status").length - 1, 2);
+  assert.equal(hook.split("run node .cloop/cloop.mjs status").length - 1, 2);
   assert.doesNotMatch(hook, /coexist|cheapGPT keeps/);
   const block = buildManagedBlock("town", "body");
   assert.doesNotMatch(block, /cheapGPT/);
@@ -749,17 +753,20 @@ test("repeated updates keep the multi-agent table that install created", async (
   }
 });
 
-test("the installed flow tool validates its own flow, and doctor flags a stale copy", async () => {
+test("the installed engine validates its flow and cards; doctor flags a stale card; update removes the 1.1.0 root copy", async () => {
   const dir = await tempDir();
   try {
     await cli(dir, ["install", "--profile", "town"]);
     const { execFileSync } = await import("node:child_process");
-    assert.match(execFileSync(process.execPath, [path.join(dir, "cloop.mjs"), "check"], { cwd: dir, encoding: "utf8" }), /^FLOW OK/);
-    await writeFile(path.join(dir, "cloop.mjs"), "// edited\n");
+    assert.match(execFileSync(process.execPath, [path.join(dir, ".cloop", "cloop.mjs"), "check"], { cwd: dir, encoding: "utf8" }), /^FLOW OK/);
+    await writeFile(path.join(dir, ".cloop", "cards", "loop.md"), "---\ncard: loop\n---\nedited\n");
+    await writeFile(path.join(dir, "cloop.mjs"), "#!/usr/bin/env node\n// cLoop tool: the flow, the escalation ladder, the guards\n");
     const doctor = await cli(dir, ["doctor"]);
-    assert.ok(doctor.warnings.some((w) => /cloop\.mjs does not match/.test(w)));
+    assert.ok(doctor.warnings.some((w) => /\.cloop\/cards\/loop\.md does not match/.test(w)));
+    assert.ok(doctor.warnings.some((w) => /left from cLoop 1\.1\.0/.test(w)));
     await cli(dir, ["update"]);
-    assert.equal(await readFile(path.join(dir, "cloop.mjs"), "utf8"), await readFile(path.join(ROOT, "cloop.mjs"), "utf8"));
+    assert.equal(await readFile(path.join(dir, ".cloop", "cards", "loop.md"), "utf8"), await readFile(path.join(ROOT, "cards", "loop.md"), "utf8"));
+    assert.equal(existsSync(path.join(dir, "cloop.mjs")), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
