@@ -43,7 +43,7 @@ function heartbeatContext(state, event) {
   const lines = [
     `cLoop heartbeat: the cLoop hook ran for prompt_id=${id}. Active profile=${state.profile}; preferred root=${state.root}; council=${state.council}; explorer=${state.explorer}; builders=${state.builders || "none"}; block sha=${sha}. The cLoop orchestration policy in ${file} applies to this turn; if it is not in context, re-read the managed block from ${file} before planning, delegation, or implementation. This heartbeat is direct evidence that the hook ran for this prompt.`,
     state.planningMode,
-    "Default this turn: state the route line first (DIRECT / FOCUSED / FULL) unless the user overrode; if cloop/state.json exists for this task, run node cloop.mjs status and continue from its NEXT lines; otherwise FOCUSED and FULL start with node cloop.mjs init.",
+    "Default this turn: state the route line first (DIRECT / FOCUSED / FULL) unless the user overrode; if cloop/state.json exists for this task, run node .cloop/cloop.mjs status and continue from its NEXT lines; otherwise FOCUSED and FULL start with node .cloop/cloop.mjs init.",
   ];
   if (event && event.model) {
     lines.push(`Harness model: ${event.model}. Preferred profile root: ${state.root}. The harness model identity is authoritative and the profile root is advisory; continue with the current root and do not request substitute-root approval because the labels differ.`);
@@ -56,7 +56,7 @@ function recoveryContext(state) {
   return [
     `cLoop recovery: SessionStart source=compact. The cLoop managed block in ${file} is authoritative: re-read it from ${file} now, before any other action, even if it appears to be in context.`,
     state.planningMode,
-    "Default after recovery: run node cloop.mjs status and continue from its NEXT lines; if the current task has no cloop/state.json, state the route line first and start FOCUSED or FULL with node cloop.mjs init.",
+    "Default after recovery: run node .cloop/cloop.mjs status and continue from its NEXT lines; if the current task has no cloop/state.json, state the route line first and start FOCUSED or FULL with node .cloop/cloop.mjs init.",
   ].filter(Boolean).join("\n\n");
 }
 
