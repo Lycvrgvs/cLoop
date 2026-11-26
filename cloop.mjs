@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.2';
 const ROOT = process.cwd();
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(ROOT, 'cloop');
@@ -54,7 +54,14 @@ function cardText(q) {
 function load() {
   if (!fs.existsSync(F.state)) die(`no task here: ${CMD} init <FOCUSED|FULL> <slug> "<reason>" (DIRECT uses no tool)`);
   const s = JSON.parse(fs.readFileSync(F.state, 'utf8'));
-  if (!FLOW[s.state]) die(`this task was started by an older cLoop (state ${s.state}): finish it with that version, or ${CMD} clean --force and start again`);
+  if (!FLOW[s.state]) die(`this task was started by cLoop 1.1.0 or earlier (state ${s.state}): finish it with that version, or ${CMD} clean --force and start again`);
+  if ('stage' in s) { // a task started on 1.2.0 (a core and a non-core stage) continues on one features stage
+    const from = s.version;
+    if (s.prevent) s.entry.prevent = s.prevent;
+    for (const k of ['stage', 'prevent']) delete s[k];
+    s.entry.block = null; s.blocks = []; s.version = VERSION;
+    save(s, { ev: 'migrate', from, to: VERSION });
+  }
   return s;
 }
 function save(s, event) {
@@ -68,7 +75,8 @@ function sh(cmd, args, opts = {}) {
   return { code: r.status ?? 1, out: (r.stdout || '') + (r.stderr || '') };
 }
 const ident = ['-c', 'user.name=cloop', '-c', 'user.email=cloop@localhost'];
-const gitDirArgs = () => fs.existsSync(path.join(DIR, 'git')) ? ['--git-dir=' + path.join(DIR, 'git'), '--work-tree=' + ROOT] : [];
+const STORE = path.join(DIR, 'git'), storeLine = () => fs.existsSync(STORE) ? `git: cloop/git (${CMD} git <args>)` : '';
+const gitDirArgs = () => fs.existsSync(STORE) ? ['--git-dir=' + STORE, '--work-tree=' + ROOT] : [];
 let hasId = null; // commits need an identity; a fresh sandbox may have none
 function git(args, cwd) {
   if (hasId === null) hasId = !!sh('git', ['config', 'user.email']).out.trim();
@@ -82,13 +90,18 @@ const dirty = (s) => git(['status', '--porcelain']).out.split('\n').filter((l) =
 const snapshot = () => ({ head: head(), status: git(['status', '--porcelain']).out, diff: sha256(git(['diff']).out), t: now() });
 const sameTree = (a, b) => a.head === b.head && a.status === b.status && a.diff === b.diff;
 const diffSize = (from, to) => from && to ? git(['diff', '--numstat', from, to]).out.split('\n').filter(Boolean).reduce((n, l) => n + (+l.split('\t')[0] || 0) + (+l.split('\t')[1] || 0), 0) : 0;
-function gitUsable() { // make the very writes the method needs, never a proxy: a commit, a branch ref and a worktree
-  if (!fs.existsSync(path.join(ROOT, '.git')) && git(['init', '-b', 'main']).code) return false;
-  if (git(['rev-parse', '--verify', 'HEAD']).code && git(['commit', '--allow-empty', '-m', 'cLoop baseline']).code) return false;
-  const wt = path.join(DIR, 'wt', 'probe-' + crypto.randomBytes(3).toString('hex'));
-  const ok = !git(['update-ref', 'refs/heads/cloop-probe', 'HEAD']).code && !git(['worktree', 'add', '--detach', wt, 'HEAD']).code;
-  git(['worktree', 'remove', '--force', wt]); git(['update-ref', '-d', 'refs/heads/cloop-probe']); git(['worktree', 'prune']); fs.rmSync(wt, { recursive: true, force: true });
-  return ok;
+function gitProbe(slug) { // make the very writes the method needs, never a proxy: the exclude file, the task branch, a cl/ worktree and a commit in it; '' when all work, else what refused
+  const why = (what, r) => `${what}: ${r.out.trim().split('\n').pop() || 'refused'}`;
+  let r;
+  if (!fs.existsSync(path.join(ROOT, '.git')) && !gitDirArgs().length && (r = git(['init', '-b', 'main'])).code) return why('git init', r);
+  if (git(['rev-parse', '--verify', 'HEAD']).code && (r = git(['commit', '--allow-empty', '-m', 'cLoop baseline'])).code) return why('the baseline commit', r);
+  const gd = git(['rev-parse', '--git-dir']).out.trim(); if (!gd) return 'no repository found';
+  try { const ex = path.resolve(ROOT, gd, 'info', 'exclude'); fs.mkdirSync(path.dirname(ex), { recursive: true }); fs.appendFileSync(ex, ''); } catch (e) { return 'info/exclude: ' + e.message; }
+  if ((r = git(['checkout', '-q', '-B', 'cl/' + slug])).code) return why('the task branch', r);
+  const tag = crypto.randomBytes(3).toString('hex'), br = 'cl/probe-' + tag, wt = path.join(DIR, 'wt', 'probe-' + tag);
+  const w = git(['worktree', 'add', '-q', '-b', br, wt, 'HEAD']), c = w.code ? w : git(['commit', '-q', '--allow-empty', '-m', 'cLoop probe'], wt);
+  git(['worktree', 'remove', '--force', wt]); git(['branch', '-q', '-D', br]); git(['worktree', 'prune']); fs.rmSync(wt, { recursive: true, force: true });
+  return w.code ? why('a worktree', w) : c.code ? why('a commit in a worktree', c) : '';
 }
 
 // ── The rubric: goals mapped to criteria, criteria with their cases ──────────────────────
@@ -125,72 +138,64 @@ function rubric() {
   if (!crit.some((c) => c.tag === 'CORE')) errors.push('add a CORE criterion');
   return { crit, goals, errors, warnings, hash: sha256([...(gl || []), ...(cl || [])].join('\n')) };
 }
-const stageScope = (s) => rubric().crit.filter((c) => c.tag === s.stage).map((c) => c.id);
-const gateScope = (s) => rubric().crit.filter((c) => s.stage === 'CORE' ? c.tag === 'CORE' : true).map((c) => c.id);
-const openInStage = (s) => stageScope(s).filter((id) => !s.est.includes(id));
-const openTargets = (s, ids) => { const known = rubric().crit.map((c) => c.id), t = (ids || []).filter((id) => known.includes(id) && !s.est.includes(id)); return t.length ? t : openInStage(s); };
+const allIds = () => rubric().crit.map((c) => c.id);
+const coreIds = () => rubric().crit.filter((c) => c.tag === 'CORE').map((c) => c.id);
+const open = (s) => allIds().filter((id) => !s.est.includes(id));
 const JUDGE_KIND = { ONESHOT: 'oneshot', LOOP: 'loop', DUEL: 'merge', GATE: 'gate', EXPLORE: 'explore' };
 
 // ── Guards: named functions; flow.json says which apply to which exit ─────────────────────
 const GUARDS = {
   ladder: (s, to) => {
     if (s.ask && s.state !== 'ASK' && to !== 'ASK') return [`a re-define is open (${s.ask}): ${CMD} advance ASK`];
-    if (to === 'ASK' && !s.ask && !(s.require || []).includes('ASK')) return [`ASK is the re-define: it opens from the ladder, a bad one-shot (after its council) or ${CMD} blocked "<what blocks>"`];
-    if (s.require && !s.require.includes(to)) return [`the ladder (rung ${s.rung}) leads to ${s.require.join(' or ')}: ${CMD} advance ${s.require[0]}`];
+    if (to === 'ASK' && !s.ask && !(s.require || []).includes('ASK')) return [`ASK is the re-define: it opens from the ladder, or from ${CMD} blocked "<what blocks>"`];
+    if (s.require && !s.require.includes(to)) return [`the last outcome leads to ${s.require.join(' or ')} (rung ${s.rung}): ${CMD} advance ${s.require[0]}`];
     return [];
   },
-  rubricUnchanged: (s) => !s.frozen || rubric().hash === s.frozen ? [] : ['the rubric changed since the freeze: restore cloop/rubric.md to the frozen version; only DEFINE changes it (a re-define, through ASK)'],
-  rubricValid: () => rubric().errors.map((x) => 'rubric: ' + x),
+  rubricUnchanged: (s) => !s.frozen || rubric().hash === s.frozen ? [] : [`the rubric changed since the freeze: restore cloop/rubric.md to the frozen version (${CMD} git checkout -- cloop/rubric.md); only DEFINE changes it, through a re-define`],
+  rubricValid: () => rubric().errors.map((x) => `rubric: ${x} (fix cloop/rubric.md, then ${CMD} freeze)`),
   rubricFrozen: (s) => s.frozen === rubric().hash ? [] : [`freeze the rubric: ${CMD} freeze`],
   baselineRun: (s) => s.entry.runs.some((r) => r.kind === 'run' && !r.cwd) ? [] : [`the baseline real run on HEAD: ${CMD} run -- <command>`],
+  prevented: (s) => [...(s.entry.prevent ? [] : [`the step back: ${CMD} stepback small "<the whole, the cause, what to remove, the real property, the correction>"`]), ...(s.entry.block ? [] : [`the one-block: ${CMD} block "<the next action, whole>"`])],
   adoptRecord: (s) => s.adopt ? [] : [`the adoption decision: ${CMD} adopt keep|simplify|replace "<what exists, what works, the user's answer>"`],
   adoptRubric: (s, to) => {
     if (!s.adopt) return [];
     if (s.adopt === 'replace') return to === 'DEFINE' ? [] : [`replace: DEFINE writes the new rubric: ${CMD} advance DEFINE`];
-    const R = rubric(), n = R.errors.map((x) => 'rubric: ' + x);
+    const R = rubric(), n = R.errors.map((x) => `rubric: ${x} (fix cloop/rubric.md)`);
     if (s.frozen !== R.hash) n.push(`freeze the adopted rubric: ${CMD} freeze`);
-    if (R.crit.length > s.baselineCount) n.push(`adoption never adds criteria (${R.crit.length} > ${s.baselineCount}): remove the new ones, or choose replace`);
+    if (R.crit.length > s.baselineCount) n.push(`adoption never adds criteria (${R.crit.length} > ${s.baselineCount}): remove the new ones, or ${CMD} adopt replace "<why>"`);
     return n;
   },
-  redefineBuilds: (s, to) => s.rung === 'redefine' && openInStage(s).length && to !== 'DUEL' ? [`after a re-define, the loop-breakers build: ${CMD} advance DUEL`] : [],
-  exploreTrigger: (s, to, why) => s.route !== 'FULL' ? ['a FOCUSED route explores only through a re-define (ASK)'] : EXPLORE_TRIGGERS[why] ? [] : [`name the trigger: ${CMD} advance EXPLORE --why ${Object.keys(EXPLORE_TRIGGERS).join('|')}`],
-  stageEstablished: (s) => openInStage(s).length ? [`stage criteria still open: ${openInStage(s).join(', ')}: ${CMD} advance LOOP`] : [],
+  redefineBuilds: (s, to) => s.rung === 'redefine' && open(s).length && to !== 'DUEL' ? [`after a re-define, the loop-breakers build: ${CMD} advance DUEL`] : [],
+  exploreAllowed: (s, to, why) => s.route !== 'FULL' ? [`a FOCUSED task never explores; it climbs: ${CMD} advance ONESHOT`] : ['ADOPT', 'DEFINE'].includes(s.state) && !EXPLORE_TRIGGERS[why] ? [`name the trigger: ${CMD} advance EXPLORE --why ${Object.keys(EXPLORE_TRIGGERS).join('|')}`] : [],
+  somethingToFix: (s) => open(s).length ? [] : [`every criterion is established: a duel has nothing to fix; the release gate comes next: ${CMD} advance GATE once a next-shot has passed (else ${CMD} advance LOOP)`],
+  nextShotPassed: (s) => { const j = s.entry.judged; return j && ['loop', 'merge'].includes(j.kind) && j.outcome === 'PASS' ? [] : [`the release gate needs a next-shot that passed its council: ${CMD} advance LOOP`]; },
   exploreSettled: (s) => {
     const e = s.entry, j = e.judged;
-    if (!j || !e.winner) return [`the options judged and one chosen: ${CMD} judge explore <idA> <idB> --options <aliases>, then winner <alias>`];
+    if (!j || !e.winner) return [`the options judged and one chosen: ${CMD} judge explore <idA> <idB> --options <aliases>, then ${CMD} winner <alias>`];
     if (!j.outcome) return [j.amalgam ? `the amalgam judged: ${CMD} judge merge <idA> <idB>` : `settle every NOT_MET: ${CMD} reproduce <ID> yes|no -- <command>`];
-    return e.runs.some((r) => r.code === 0 && r.t > e.winnerT && r.sha === head() && !r.cwd) ? [] : [`the integrated result run on real input on HEAD: ${CMD} run -- <command>`];
+    return e.runs.some((r) => r.code === 0 && r.t > e.winnerT && r.sha === head() && !r.cwd) ? [] : [`the merged one-shot run on real input on HEAD: ${CMD} run -- <command>`];
   },
   realRun: (s) => s.entry.runs.some((r) => r.kind === 'run' && r.code === 0) ? [] : [`a passing real run of the one-shot: ${CMD} run -- <command>`],
-  seenFailing: (s) => s.entry.runs.some((r) => r.kind === 'before' && (r.code !== 0 || r.judgment)) ? [] : [`the target seen failing on BEST: ${CMD} run --before --cwd <a worktree of BEST> -- <the target's test>`],
+  seenFailing: (s) => !(s.entry.failing || []).length || s.entry.runs.some((r) => r.kind === 'before' && (r.code !== 0 || r.judgment)) ? [] : [`a failing criterion seen failing on BEST before the repair: ${CMD} run --before --cwd <a worktree of BEST> -- <its check>`],
   judged: (s) => {
     const j = s.entry.judged, kind = JUDGE_KIND[s.state];
-    if (!j) return [`the council: ${CMD} call judge (twice), then judge ${kind} <idA> <idB>`];
-    return j.outcome ? [] : [`settle every NOT_MET: ${CMD} reproduce <ID> yes|no -- <command> | reproduce <ID> missing "<why>"`];
-  },
-  passRoute: (s, to) => { // where a PASS leads
-    const j = s.entry.judged; if (!j || j.outcome !== 'PASS') return [];
-    if (s.state === 'GATE') {
-      if (s.stage === 'CORE' && !['ONESHOT', 'LOOP'].includes(to)) return [`the core gate passed: the NON-CORE stage starts: ${CMD} advance ONESHOT (or LOOP)`];
-      if (s.stage === 'NON-CORE' && to !== 'ACCEPT') return [`the release gate passed: ${CMD} advance ACCEPT`];
-      return [];
-    }
-    return ['GATE', 'LOOP'].includes(to) ? [] : [`after a PASS: ${CMD} advance ${openInStage(s).length ? 'LOOP' : 'GATE'}`];
+    if (!j) return [`the council: ${CMD} call judge (twice), then ${CMD} judge ${kind} <idA> <idB>`];
+    return j.outcome ? [] : [`settle every NOT_MET: ${CMD} reproduce <ID> yes|no -- <command> | ${CMD} reproduce <ID> missing "<why>"`];
   },
   userAnswer: (s) => s.entry.answer ? [] : [`the user's words: ${CMD} answer "<their words>"`],
   replanApproved: (s, to) => {
     const e = s.entry;
-    if (!e.replan) return [`the loop-breakers' re-plan: ${CMD} call dueler (twice), then stepback replan DEFINE|EXPLORE "<the re-plan>"`];
-    if (!e.approved) return [`the user's approval of the re-plan: ${CMD} approve "<their words>"`];
+    if (!e.replan) return [`the loop-breakers' re-plan: ${CMD} call dueler (twice), then ${CMD} stepback replan DEFINE|EXPLORE "<the re-plan>"`];
+    if (!e.approved) return [`the user's yes to the re-plan: ${CMD} approve "<their words>"`];
     return to === e.replan.choice ? [] : [`the approved re-plan goes to ${e.replan.choice}: ${CMD} advance ${e.replan.choice}`];
   },
   finalReport: (s) => s.entry.finalReport ? [] : [`the final report: ${CMD} report --final`],
   proposalsResolved: (s) => s.proposals.some((p) => !p.resolved) ? [`resolve every rubric proposal: ${CMD} resolve <n> "<applied in DEFINE | dismissed: reason>"`] : [],
-  gatedHead: (s) => head() === s.gateSha ? [] : [`HEAD ${head().slice(0, 7)} is not the gated commit ${(s.gateSha || 'none').slice(0, 7)}: deliver the gated commit, or gate again`],
+  gatedHead: (s) => head() === s.gateSha ? [] : [`HEAD ${head().slice(0, 7)} is not the gated commit ${(s.gateSha || 'none').slice(0, 7)}: ${CMD} git checkout ${(s.gateSha || '').slice(0, 7)}, or gate again`],
 };
 function needs(s, to, why) {
   const st = FLOW[s.state];
-  if (!st.next.includes(to)) return [`${s.state} cannot go to ${to}; it goes to ${st.next.join(', ') || 'nothing (the task is over)'}`];
+  if (!st.next.includes(to)) return [`${s.state} cannot go to ${to}; it goes to ${st.next.join(', ') || 'nothing (the task is over)'}: ${CMD} advance <one of them>`];
   const n = [];
   for (const g of FLOWDATA.always) n.push(...GUARDS[g](s, to, why));
   if (to === FLOWDATA.escape && s.state !== FLOWDATA.escape) return n; // the user decides; no exit evidence is owed
@@ -201,15 +206,17 @@ function allowed(s, name) { // a command runs only in the states flow.json names
   const where = FLOWDATA.commands[name];
   if (where && !where.includes(s.state)) die(`${name} belongs to ${where.join(' or ')}; this task is in ${s.state}: ${NEXT_HINT}`);
 }
-function preventFirst(s) { // the small step back before building or judging a build
-  if (['ONESHOT', 'LOOP', 'EXPLORE'].includes(s.state) && !s.prevent) die(`PREVENT first: ${CMD} stepback small --targets <IDs> "<the whole, the cause, what to remove, the real property, the correction>" (the step-back card)`);
+function preventFirst(s) { // the prevent before building: the step back, and in a next-shot the one-block too (a one-shot is its own block)
+  if (!['ONESHOT', 'LOOP', 'EXPLORE'].includes(s.state)) return;
+  const p = s.state === 'LOOP' ? GUARDS.prevented(s) : s.entry.prevent ? [] : GUARDS.prevented(s).slice(0, 1);
+  if (p.length) die(`PREVENT first: ${p.join('; ')} (the step-back${s.state === 'LOOP' ? ' and one-block cards' : ' card'})`);
 }
-function gateRuns(s, sha, before) { // a gate runs the product end to end (and the suite at the release gate) on the commit it certifies
+function gateRuns(s, sha, before) { // the release gate runs the product end to end and the full suite on the commit it certifies
   const ok = (k) => s.runs.some((r) => r.kind === k && r.code === 0 && r.sha === sha && (!before || r.t < before));
   const n = [];
   if (!ok('e2e')) n.push(`a passing end-to-end run on this commit: ${CMD} run --e2e -- <command>`);
-  if (s.stage === 'NON-CORE' && !ok('suite')) n.push(`a passing full suite on this commit: ${CMD} run --suite -- <command>`);
-  if (n.length) die('the gate needs, before its judges:\n- ' + n.join('\n- '));
+  if (!ok('suite')) n.push(`a passing full suite on this commit: ${CMD} run --suite -- <command>`);
+  if (n.length) die('the release gate needs, before its judges:\n- ' + n.join('\n- '));
 }
 
 // ── Judging, outcomes, the ladder ────────────────────────────────────────────────────────
@@ -241,13 +248,14 @@ function parseOut(file, ids, worktree, useIds) {
   for (const id of ids) if (!v[id]) incomplete.push(`${id}: no verdict line`);
   return { v, incomplete, rubricLines, fixes };
 }
+const AFTER_PASS = { oneshot: 'LOOP', explore: 'LOOP', loop: 'GATE', merge: 'GATE', gate: 'ACCEPT' }; // one-shot → next-shot → release gate → the user
+const RETRY = { oneshot: 'ONESHOT', explore: 'ONESHOT', loop: 'LOOP', merge: 'LOOP', gate: 'LOOP' }; // the next attempt on the small rung
 function escalate(s, j) { // outcomes counted per rung since the last PASS or rung change; the nth of a kind moves the rung
-  s.prevent = null;
-  if (j.outcome === 'PASS') { s.rung = LADDER.pass; s.count = ZERO(); s.require = null; return; }
-  if (j.kind === 'oneshot' && j.outcome !== 'REGRESSION') { s.require = [LADDER.oneshot.good, LADDER.oneshot.bad]; return; } // good → small loops; bad → a re-define
+  if (j.outcome === 'PASS') { s.rung = LADDER.pass; s.count = ZERO(); s.require = [AFTER_PASS[j.kind]]; return; }
   const from = s.rung; s.count[j.outcome]++;
   const [n, to] = LADDER[from][j.outcome]; if (s.count[j.outcome] >= n && to !== from) { s.rung = to; s.count = ZERO(); }
-  s.require = [RUNGS[s.rung].state];
+  if (s.rung !== 'small') s.require = [RUNGS[s.rung].state];
+  else s.require = [['oneshot', 'explore'].includes(j.kind) && j.outcome === 'ADVANCED' ? 'LOOP' : RETRY[j.kind]]; // a sound base goes to the next-shot; an unsound one is shot again
   if (s.rung === 'redefine') s.ask = `${j.kind} ${j.outcome} at rung ${from}: ${s.targets.join(', ')}`;
 }
 function settle(s) { // the outcome, once every NOT_MET is settled
@@ -257,8 +265,9 @@ function settle(s) { // the outcome, once every NOT_MET is settled
   const est = j.scope.filter((id) => st(id) !== 'yes' && (j.met.includes(id) || st(id) === 'no')); // only a reproduced violation blocks; missing evidence stays open
   const regress = j.scope.filter((id) => s.est.includes(id) && st(id) === 'yes');
   const fresh = est.filter((id) => !s.est.includes(id)), failed = j.scope.filter((id) => !est.includes(id));
+  const shot = ['oneshot', 'explore'].includes(j.kind), passed = shot ? coreIds().every((id) => est.includes(id)) : !failed.length; // a one-shot passes when every core criterion works; non-core may be partial
   j.established = est;
-  j.outcome = regress.length ? 'REGRESSION' : !failed.length ? 'PASS' : fresh.length ? 'ADVANCED' : 'STALLED';
+  j.outcome = regress.length ? 'REGRESSION' : passed ? 'PASS' : fresh.length ? 'ADVANCED' : 'STALLED';
   s.est = [...new Set([...s.est.filter((id) => !regress.includes(id)), ...est])];
   s.targets = failed;
   j.diff = diffSize(s.best || s.base, j.sha);
@@ -292,10 +301,11 @@ function counts(s) {
 const levelLine = (s) => `rung ${s.rung} (${RUNGS[s.rung].says}; here: ADVANCED ${s.count.ADVANCED}/${LADDER[s.rung].ADVANCED[0]}, STALLED ${s.count.STALLED}/${LADDER[s.rung].STALLED[0]}, REGRESSION ${s.count.REGRESSION}/${LADDER[s.rung].REGRESSION[0]})`;
 const nextLines = (s) => FLOW[s.state].next.map((t) => { const x = needs(s, t); return `- ${t}: ${x.length ? 'needs ' + x.join('; ') : 'ready'}`; });
 function board(s) {
-  const R = rubric();
+  const R = rubric(), blk = (s.blocks || []).slice(-1)[0];
   return [`# cLoop board (rendered by cloop.mjs; do not edit)`, '',
-    `## Task`, `${s.route} — ${s.reason} | cl/${s.slug} | state ${s.state} | stage ${s.stage} | ${levelLine(s)} | rubric ${s.frozen ? s.frozen.slice(0, 12) + (s.hard ? ' (frozen)' : ' (provisional)') : 'not frozen'}`, '',
+    `## Task`, `${s.route} — ${s.reason} | cl/${s.slug} | state ${s.state} | ${levelLine(s)} | rubric ${s.frozen ? s.frozen.slice(0, 12) + (s.hard ? ' (frozen)' : ' (provisional)') : 'not frozen'}${storeLine() ? ' | ' + storeLine() : ''}`, '',
     `## BEST`, `${s.best ? s.best.slice(0, 7) : 'none'} | ${counts(s)}`, '',
+    `## Next action`, ...(blk ? [`(${blk.state}, ${blk.t.slice(0, 16)})`, blk.text] : ['none yet: the one-block after the step back']), '',
     `## Criteria`, ...R.crit.map((c) => `- ${c.id} ${c.tag}${c.use ? ' (use)' : ''}: ${s.est.includes(c.id) ? 'established' : 'open'}`), '',
     `## Judgings`, ...s.history.map((h) => `- ${h.t.slice(11, 19)} ${h.kind} @${(h.sha || '').slice(0, 7)} → ${h.outcome} (${h.established.length}/${h.scope.length}), rung ${h.from} → ${h.to}`), '',
     `## Signals (computed)`, ...signals(s).map((x) => '- ' + x), '',
@@ -305,25 +315,28 @@ function board(s) {
     `## Next`, ...nextLines(s), ''].join('\n');
 }
 function report(s, final) {
-  const j = s.history[s.history.length - 1], open = rubric().crit.filter((c) => !s.est.includes(c.id)).map((c) => c.id);
+  const j = s.history[s.history.length - 1], o = open(s);
   const ready = FLOW[s.state].next.find((t) => !needs(s, t).length);
-  const out = [`Last: ${j ? j.outcome + ' (' + j.kind + ')' : 'no judging yet'} — ${levelLine(s)} — ${s.state}/${s.stage} — ${counts(s)} — open: ${open.join(', ') || 'none'} — next: ${FLOW[s.state].terminal ? 'end' : ready || needs(s, (s.require || FLOW[s.state].next)[0]).join('; ')}`];
+  const out = [`Last: ${j ? j.outcome + ' (' + j.kind + ')' : 'no judging yet'} — ${levelLine(s)} — ${s.state} — ${counts(s)} — open: ${o.join(', ') || 'none'} — next: ${FLOW[s.state].terminal ? 'end' : ready || needs(s, (s.require || FLOW[s.state].next)[0]).join('; ')}`];
   if (j) {
     const blocks = Object.entries(j.alleged).filter(([, x]) => x.status === 'yes').map(([id]) => id);
     const notes = [...Object.entries(j.alleged).filter(([, x]) => x.status !== 'yes').map(([id, x]) => `${id} ${x.status === 'missing' ? 'not decided (missing run)' : 'unconfirmed'}`), ...s.proposals.filter((p) => !p.resolved).map((p) => 'rubric proposal: ' + p.text)];
     if (blocks.length) out.push('Blocks: ' + blocks.join(', ')); if (notes.length) out.push('Does not block: ' + notes.join('; '));
   }
   const sig = signals(s); if (sig.length) out.push('Signals (computed): ' + sig.join('; '));
-  if (final) out.push(`Delivered: cl/${s.slug} at ${head().slice(0, 7)}.`, ...(s.vetoes.length ? ['Vetoes: ' + s.vetoes.join('; ')] : []), ...(s.backlog.length ? ['Backlog: ' + s.backlog.join('; ')] : []));
+  if (final) {
+    out.push(`Delivered: cl/${s.slug} at ${head().slice(0, 7)}.`, ...(s.vetoes.length ? ['Vetoes: ' + s.vetoes.join('; ')] : []), ...(s.backlog.length ? ['Backlog: ' + s.backlog.join('; ')] : []));
+    out.push(fs.existsSync(STORE) ? `Where the work is: the files on disk are the result; your own .git sees them as uncommitted changes; the task's commits are in cloop/git (${CMD} git log).` : `Where the work is: branch cl/${s.slug} in your repository.`);
+  }
   return out.join('\n');
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────────────────
-const freshEntry = () => ({ t: now(), runs: [], judged: null, finalReport: false, winner: null, winnerT: null, answer: null, replan: null, approved: null, duelers: [], fixes: [] });
+const freshEntry = (failing = []) => ({ t: now(), failing, runs: [], judged: null, prevent: null, block: null, finalReport: false, winner: null, winnerT: null, answer: null, replan: null, approved: null, duelers: [], fixes: [] });
 const [cmd, ...a] = process.argv.slice(2);
 const flag = (f) => { const i = a.indexOf(f); if (i < 0) return false; a.splice(i, 1); return true; };
 const opt = (f) => { const i = a.indexOf(f); if (i < 0) return null; const v = a[i + 1]; a.splice(i, 2); return v; };
-const text = (what) => { const t = a.join(' ').trim(); if (!t) die(`add ${what}`); return t; };
+const text = (what) => { const t = a.join(' ').trim(); if (!t) die(`write ${what} (in quotes after the command)`); return t; };
 
 const C = {
   init() {
@@ -332,27 +345,32 @@ const C = {
     if (fs.existsSync(F.state)) die(`a task exists here: ${NEXT_HINT}`);
     fs.mkdirSync(DIR, { recursive: true });
     const existing = !git(['rev-parse', '--verify', 'HEAD']).code && git(['ls-files']).out.split('\n').filter((f) => f && product(f)).length > 0;
-    if (!fs.existsSync(path.join(DIR, 'git')) && !gitUsable()) {
-      const history = !git(['rev-parse', '--verify', 'HEAD']).code, bare = path.join(DIR, 'git');
-      const r = history ? git(['clone', '--bare', '--no-hardlinks', '-q', ROOT, bare], ROOT) : git(['init', '--bare', '-b', 'main', bare], ROOT); if (r.code) die(`the repository could not be moved to cloop/git:\n${r.out}`);
+    const refused = fs.existsSync(STORE) ? '' : gitProbe(slug);
+    if (refused) { // the task's own repository: a clone that keeps the checkout's HEAD (its branch, a linked worktree's branch or a detached commit), with the files on disk as its working tree
+      const history = !git(['rev-parse', '--verify', 'HEAD']).code;
+      const r = history ? git(['clone', '--bare', '--no-hardlinks', '-q', ROOT, STORE], ROOT) : git(['init', '--bare', '-b', 'main', STORE], ROOT);
+      if (r.code) die(`.git refuses the writes the method makes (${refused}), and cloop/git could not be created:\n${r.out}`);
+      git(['config', 'core.bare', 'false']); git(['remote', 'remove', 'origin']); // nothing in the store can push to the user's repository
       if (history) git(['reset', '-q']);
-      console.log(`.git refuses the writes the method makes here: the repository lives in cloop/git${history ? ', with its history' : ''} (run git through ${CMD} git <args>)`);
+      const again = gitProbe(slug);
+      if (again) { fs.rmSync(STORE, { recursive: true, force: true }); die(`git refuses the writes the method makes, in .git (${refused}) and in cloop/git (${again}); cloop/git was removed and the task folder kept: free the writes, then init again`); }
+      console.log(`.git refuses the writes the method makes here (${refused}): the repository lives in cloop/git${history ? ', with its history' : ''} (run git through ${CMD} git <args>)`);
     }
     const ex = path.resolve(ROOT, git(['rev-parse', '--git-dir']).out.trim(), 'info', 'exclude'); fs.mkdirSync(path.dirname(ex), { recursive: true });
     const have = fs.existsSync(ex) ? fs.readFileSync(ex, 'utf8').split('\n') : [];
-    fs.appendFileSync(ex, ['cloop/*', '!cloop/rubric.md', '!cloop/spec.md', '!cloop/architecture.md', 'temporary/'].filter((w) => !have.includes(w)).map((w) => w + '\n').join(''));
+    fs.appendFileSync(ex, ['cloop/*', '!cloop/rubric.md', '!cloop/spec.md', '!cloop/architecture.md', 'temporary/', '.cloop/'].filter((w) => !have.includes(w)).map((w) => w + '\n').join(''));
     if (git(['rev-parse', '--verify', 'HEAD']).code) { const c = git(['commit', '--allow-empty', '-m', 'cLoop baseline']); if (c.code) die(`the baseline commit failed:\n${c.out}`); }
     const co = git(['checkout', '-q', '-B', 'cl/' + slug]); if (co.code) die(`the task branch could not be checked out:\n${co.out}`);
     const dirtyAtInit = dirty(); // what was there before the task is not its candidate
-    const s = { version: VERSION, route, slug, reason: why.join(' '), state: FLOWDATA.start[existing ? 'existing' : 'new'], stage: 'CORE', baselineCount: fs.existsSync(F.rubric) ? rubric().crit.length : 0, entry: freshEntry(), adopt: null, frozen: null, hard: false, frozenSet: null, est: [], targets: [], rung: 'small', count: ZERO(), require: null, prevent: null, ask: null, proposals: [], stepbacks: [], history: [], vetoes: [], backlog: [], notes: [], calls: {}, runs: [], base: head(), best: null, gateSha: null, snap: null, dirtyAtInit };
+    const s = { version: VERSION, route, slug, reason: why.join(' '), state: FLOWDATA.start[existing ? 'existing' : 'new'], baselineCount: fs.existsSync(F.rubric) ? rubric().crit.length : 0, entry: freshEntry(), adopt: null, frozen: null, hard: false, frozenSet: null, est: [], targets: [], rung: 'small', count: ZERO(), require: null, ask: null, proposals: [], stepbacks: [], blocks: [], history: [], vetoes: [], backlog: [], notes: [], calls: {}, runs: [], base: head(), best: null, gateSha: null, snap: null, dirtyAtInit };
     save(s, { ev: 'init', route, slug, existing }); console.log(`CLOOP: ${route} — ${s.reason}`); C.status();
   },
   status() {
     const s = load(), R = rubric(), T = FLOW[s.state];
-    console.log(`STATE ${s.state} · stage ${s.stage} · ${counts(s)} · ${levelLine(s)} · BEST ${(s.best || 'none').slice(0, 7)}\n\nCARDS\n${cardText({ state: s.state, role: 'root' })}`);
+    console.log(`STATE ${s.state} · ${s.route} · ${counts(s)} · ${levelLine(s)} · BEST ${(s.best || 'none').slice(0, 7)}${storeLine() ? ' · ' + storeLine() : ''}\n\nCARDS\n${cardText({ state: s.state, role: 'root' })}`);
     if (T.terminal) return;
     if (s.ask) console.log(`\nRE-DEFINE WITH THE USER (${s.ask})`);
-    if (['LOOP', 'DUEL'].includes(s.state)) { const ids = s.state === 'DUEL' ? openTargets(s, s.targets) : (s.prevent && s.prevent.targets) || s.targets; console.log('\nTARGETS\n' + (R.crit.filter((c) => ids.includes(c.id)).map((c) => c.raw).join('\n') || 'none yet: name them in the step back (--targets)')); }
+    if (['LOOP', 'DUEL'].includes(s.state) && s.targets.length) console.log('\nFAILING (the next-shot repairs them; the council judges every criterion)\n' + R.crit.filter((c) => s.targets.includes(c.id)).map((c) => c.raw).join('\n'));
     if (s.state === 'DEFINE' && s.route === 'FULL') console.log('\nEXPLORE TRIGGERS\n' + Object.entries(EXPLORE_TRIGGERS).map(([k, v]) => `- ${k}: ${v}`).join('\n'));
     if (R.warnings.length) console.log('\nRUBRIC WARNINGS\n- ' + R.warnings.join('\n- '));
     const j = s.entry.judged; if (j && !j.outcome && j.alleged) { const ids = Object.keys(j.alleged).filter((id) => j.alleged[id].status === undefined); if (ids.length) console.log('\nSETTLE before the outcome counts: ' + ids.map((id) => `reproduce ${id} yes|no -- <command> | reproduce ${id} missing "<why>"`).join(' ; ')); }
@@ -361,28 +379,25 @@ const C = {
     console.log('\nNEXT\n' + nextLines(s).join('\n'));
   },
   advance() {
-    const s = load(), why = opt('--why'), to = a[0]; if (!FLOW[to]) die(`unknown state ${to || ''}; ${s.state} goes to ${FLOW[s.state].next.join(', ')}`);
+    const s = load(), why = opt('--why'), to = a[0]; if (!FLOW[to]) die(`unknown state ${to || ''}; ${s.state} goes to ${FLOW[s.state].next.join(', ')}: ${CMD} advance <one of them>`);
     const x = needs(s, to, why); if (x.length) die(`${s.state} → ${to} needs:\n- ` + x.join('\n- '));
-    const j = s.entry.judged;
-    if (to === 'ASK' && !s.ask) { s.rung = 'redefine'; s.count = ZERO(); s.ask = `a bad one-shot: ${s.targets.join(', ')}`; } // a wrong base is re-defined with the user
     if (s.state === 'ASK') { s.ask = null; if (to !== 'STOPPED') s.count = ZERO(); }
-    if (s.state === 'DEFINE' && s.rung === 'redefine') s.targets = openInStage(s); // the re-defined stage's open criteria
-    if (s.state === 'GATE' && j && j.outcome === 'PASS' && s.stage === 'CORE') s.stage = 'NON-CORE';
+    if (s.state === 'DEFINE' && s.rung === 'redefine') s.targets = open(s); // the re-defined rubric's open criteria
     if (to === 'DONE' && (s.vetoes.length || s.backlog.length)) {
       let t = fs.readFileSync(F.rubric, 'utf8').trimEnd();
       if (s.vetoes.length) t += '\n\n## Vetoes\n' + s.vetoes.map((v) => '- ' + v).join('\n');
       if (s.backlog.length) t += '\n\n## Backlog\n' + s.backlog.map((v) => '- ' + v).join('\n');
       fs.writeFileSync(F.rubric, t + '\n'); git(['add', 'cloop/rubric.md']); git(['commit', '-q', '-m', 'Record vetoes and backlog']);
       const files = git(['diff', '--name-only', s.gateSha, 'HEAD']).out.trim().split('\n').filter(Boolean);
-      if (files.some((f) => f !== 'cloop/rubric.md') || rubric().hash !== s.frozen) die(`the delivery commit changes more than the rubric's vetoes and backlog (${files.join(', ')}): reset to the gated commit ${(s.gateSha || '').slice(0, 7)} and advance DONE again`);
+      if (files.some((f) => f !== 'cloop/rubric.md') || rubric().hash !== s.frozen) die(`the delivery commit changes more than the rubric's vetoes and backlog (${files.join(', ')}): ${CMD} git reset --hard ${(s.gateSha || '').slice(0, 7)}, then advance DONE again`);
     }
     if (to === 'EXPLORE' && EXPLORE_TRIGGERS[why]) s.notes.push(`EXPLORE trigger: ${why} — ${EXPLORE_TRIGGERS[why]}`);
-    s.require = null; s.state = to; s.entry = freshEntry(); save(s, { ev: 'advance', to, why }); C.status();
+    s.require = null; s.state = to; s.entry = freshEntry([...s.targets]); save(s, { ev: 'advance', to, why }); C.status(); // what fails when a step starts is what it must see failing first
   },
   adopt() { const s = load(), d = a.shift(); allowed(s, 'adopt'); if (!['keep', 'simplify', 'replace'].includes(d)) die('adopt keep|simplify|replace "<what exists, what works on the baseline, the protected checks, the user\'s answer>"'); s.adopt = d; save(s, { ev: 'adopt', decision: d, reason: text("what exists and the user's answer") }); console.log('adoption: ' + d); },
   freeze() {
     const s = load(), user = opt('--user'); allowed(s, 'freeze');
-    const R = rubric(); if (R.errors.length) die('fix the rubric first:\n- ' + R.errors.join('\n- '));
+    const R = rubric(); if (R.errors.length) die('fix the rubric first (cloop/rubric.md), then freeze:\n- ' + R.errors.join('\n- '));
     if (s.frozenSet && R.hash !== s.frozen) {
       const removed = s.frozenSet.ids.filter((id) => !R.crit.some((c) => c.id === id)), goals = R.goals.map((g) => g.raw).join('\n') !== s.frozenSet.goals;
       const why = [...(s.hard ? ['the rubric is frozen hard'] : []), ...(removed.length ? [`removed: ${removed.join(', ')}`] : []), ...(goals ? ['the goals changed'] : [])];
@@ -407,17 +422,19 @@ const C = {
     if (!ROLES.includes(role)) die(`call ${ROLES.join('|')} [--at <commit>]`);
     allowed(s, 'call ' + role);
     if (role === 'judge') {
-      const d = dirty(s); if (d.length) die(`judges review HEAD: commit the candidate first; a file that is not part of the product goes in the repository's info/exclude (uncommitted: ${d.slice(0, 3).join(', ')})`);
+      const d = dirty(s); if (d.length) die(`judges review HEAD: commit the candidate first (${CMD} git add -A && ${CMD} git commit -m "<what>"); a file that is not part of the product goes in the repository's info/exclude (uncommitted: ${d.slice(0, 3).join(', ')})`);
       if (s.state === 'GATE') gateRuns(s, head());
     }
+    if (role === 'dueler' && s.state === 'DUEL') { const x = GUARDS.somethingToFix(s); if (x.length) die(x[0]); }
     if (['dynamic', 'mechanical'].includes(role)) preventFirst(s);
     const commit = at || (['judge', 'member'].includes(role) ? head() : s.best || head()), id = crypto.randomBytes(4).toString('hex');
     const run = path.join(DIR, 'runs', id), wt = path.join(DIR, 'wt', id); fs.mkdirSync(run, { recursive: true });
     const r = git(['worktree', 'add', '-q', '-b', 'cl/' + id, wt, commit]); if (r.code) die(`the worktree could not be created:\n${r.out}`);
     if (role === 'judge' && !s.snap) s.snap = snapshot();
     if (role === 'dueler') s.entry.duelers.push(id);
-    const card = cardText({ state: s.state, role }) + (role === 'dueler' && CARDS['step-back'] ? '\n\n' + CARDS['step-back'].body : ''); // the loop-breaker takes the same step back
-    fs.writeFileSync(path.join(run, 'packet.md'), `${card}\n\n## This call\n- call: ${id} (${role})\n- commit: ${commit}\n- worktree: ${rel(wt)}${role === 'judge' ? ' (read-only: write nothing outside it)' : ` (commit your work there, on branch cl/${id})`}\n\n## The assignment\n`);
+    const extra = role === 'dueler' ? ['step-back', 'one-block'].filter((c) => CARDS[c]).map((c) => CARDS[c].body) : []; // the loop-breaker takes the same prevent
+    const blk = (s.blocks || []).slice(-1)[0], handoff = ['dynamic', 'mechanical'].includes(role) && blk ? `\n## The one-block this build is part of\n${blk.text}\n` : '';
+    fs.writeFileSync(path.join(run, 'packet.md'), `${[cardText({ state: s.state, role }), ...extra].join('\n\n')}\n${handoff}\n## This call\n- call: ${id} (${role})\n- commit: ${commit}\n- worktree: ${rel(wt)}${role === 'judge' ? ' (read-only: write nothing outside it)' : ` (commit your work there, on branch cl/${id})`}\n\n## The assignment\n`);
     s.calls[id] = { role, commit, t: now(), worktree: wt }; save(s, { ev: 'call', id, role, commit });
     console.log(`call ${id} (${role}) at ${commit.slice(0, 7)}\npacket: ${rel(run)}/packet.md (its card is written; append the assignment)\nreturn: ${rel(run)}/out.md (the reply, verbatim)\nworktree: ${rel(wt)}`);
   },
@@ -434,15 +451,15 @@ const C = {
       const last = Math.max(...e.runs.filter((r) => r.cwd).map((r) => Date.parse(r.t)));
       if (!e.runs.some((r) => !r.cwd && r.code === 0 && Date.parse(r.t) > last)) die(`run the merged product on HEAD: ${CMD} run -- <command>`);
     }
-    if (kind === 'loop') preventFirst(s);
+    if (['loop', 'oneshot'].includes(kind)) preventFirst(s);
     for (const id of [idA, idB]) if (!s.calls[id] || s.calls[id].role !== 'judge') die(`${id} is not a judge call: ${CMD} call judge`);
-    if (idA === idB) die('two different judges: call judge twice');
+    if (idA === idB) die(`two different judges: ${CMD} call judge, twice`);
     if (!s.snap) die(`start the judge calls with ${CMD} call judge`);
     const before = s.snap, after = snapshot(); s.snap = null;
     if (!sameTree(before, after)) { save(s, { ev: 'judge-void', kind }); die(`the repository changed during the calls: both are void; ${CMD} redispatch <id> for each, with the same packets, then judge again`); }
     if (kind === 'gate') gateRuns(s, before.head, before.t);
-    const scope = kind === 'gate' ? gateScope(s) : kind === 'loop' ? ((s.prevent && s.prevent.targets) || s.targets) : (kind === 'merge' && s.state === 'DUEL') ? openTargets(s, s.targets) : stageScope(s);
-    if (!scope.length) die(`nothing in scope: name the targets in the step back (--targets), or ${NEXT_HINT}`);
+    const scope = allIds(); // the council judges every criterion, at every step
+    if (!scope.length) die(`the rubric has no criteria: ${NEXT_HINT}`);
     if (kind === 'explore' && options.length < 2) die('judge explore needs --options with at least two aliases');
     const ids = kind === 'explore' ? options.flatMap((o) => scope.map((c) => `${o}/${c}`)) : scope, useIds = rubric().crit.filter((c) => c.use).map((c) => c.id);
     const res = [idA, idB].map((id) => ({ id, ...parseOut(path.join(DIR, 'runs', id, 'out.md'), ids, s.calls[id].worktree, useIds) })), bad = res.filter((r) => r.incomplete.length);
@@ -456,7 +473,7 @@ const C = {
     for (const r of res) for (const id of ids) if (r.v[id] === 'NOT_MET') alleged[id] = {};
     const lastRun = e.runs.filter((r) => !r.cwd && ['run', 'e2e'].includes(r.kind) && r.sha === before.head).pop(), runFailed = !!lastRun && lastRun.code !== 0;
     if (kind === 'explore') { // eligibility is computed; the choice is judged
-      const core = scope.filter((c) => rubric().crit.find((x) => x.id === c).tag === 'CORE'), good = (o, c) => met.includes(`${o}/${c}`) && !alleged[`${o}/${c}`];
+      const core = coreIds(), good = (o, c) => met.includes(`${o}/${c}`) && !alleged[`${o}/${c}`];
       const rank = options.map((o) => ({ o, core: core.filter((c) => good(o, c)).length, all: scope.filter((c) => good(o, c)).length }));
       const full = rank.filter((r) => r.core === core.length).map((r) => r.o), eligible = full.length ? full : options;
       e.judged = { kind, sha: before.head, scope, options, rank, eligible, met, alleged, runFailed, t: now(), outcome: null, established: [] };
@@ -470,7 +487,7 @@ const C = {
     const s = load(), picks = (a[0] || '').split(',').filter(Boolean), j = s.entry.judged; allowed(s, 'winner');
     if (!j || j.kind !== 'explore' || !j.options || s.entry.winner) die(`winner follows judge explore, once: ${NEXT_HINT}`);
     if (!picks.length) die('winner <alias> | winner <a>,<b> (an amalgam, judged again)');
-    for (const o of picks) if (!j.eligible.includes(o)) die(`${o} is not eligible (eligible: ${j.eligible.join(', ')}): an option that misses a CORE criterion another option establishes is out`);
+    for (const o of picks) if (!j.eligible.includes(o)) die(`${o} is not eligible (eligible: ${j.eligible.join(', ')}): an option that misses a CORE criterion another option establishes is out; ${CMD} winner <an eligible alias>`);
     for (const r of j.rank) if (!picks.includes(r.o)) s.vetoes.push(`explored option ${r.o}: CORE ${r.core}, all ${r.all}/${j.scope.length}`);
     s.entry.winner = picks.join(','); s.entry.winnerT = now();
     if (picks.length > 1) { s.entry.judged = { kind: 'explore', amalgam: true, scope: j.scope, alleged: {}, met: [], outcome: null, established: [], t: now() }; save(s, { ev: 'winner', options: picks }); return console.log(`amalgam: integrate it, run it on HEAD, then ${CMD} call judge (twice) and judge merge`); }
@@ -478,7 +495,7 @@ const C = {
     settle(s); save(s, { ev: 'winner', options: picks }); C.status();
   },
   redispatch() {
-    const s = load(), id = a[0]; allowed(s, 'redispatch'); if (!s.calls[id]) die(`unknown call ${id || ''}`); if (s.calls[id].redispatched) die(`a call is re-dispatched once; a second failure is BLOCKED: ${CMD} blocked "<what failed>"`);
+    const s = load(), id = a[0]; allowed(s, 'redispatch'); if (!s.calls[id]) die(`unknown call ${id || ''}: ${NEXT_HINT}`); if (s.calls[id].redispatched) die(`a call is re-dispatched once; a second failure is BLOCKED: ${CMD} blocked "<what failed>"`);
     s.calls[id].redispatched = true;
     const wt = s.calls[id].worktree; git(['reset', '-q', '--hard', s.calls[id].commit], wt); git(['clean', '-qfdx'], wt); // the retry starts blind, as the first call did
     fs.rmSync(path.join(DIR, 'runs', id, 'out.md'), { force: true });
@@ -495,32 +512,47 @@ const C = {
       const r = sh(command, [], { shell: true, timeout: 3 * 3600e3 }), ok = st === 'yes' ? r.code !== 0 : r.code === 0;
       const rec = { kind: 'reproduce', id, command, code: r.code, sha: head(), t: now(), tail: r.out.split('\n').slice(-12).join('\n'), judgment };
       s.entry.runs.push(rec); s.runs.push(rec); process.stdout.write(r.out);
-      if (!ok && !judgment) { save(s, { ev: 'run', ...rec }); die(`the run exited ${r.code}, which does not show "${st}": ${st === 'yes' ? 'a violation fails the command' : 'a holding criterion passes it'}; settle with the right verdict, or add --judgment when the evidence is the real output rather than the exit code`); }
+      if (!ok && !judgment) { save(s, { ev: 'run', ...rec }); die(`the run exited ${r.code}, which does not show "${st}": ${st === 'yes' ? 'a violation fails the command' : 'a holding criterion passes it'}; settle with the right verdict (${CMD} reproduce ${id} ${st === 'yes' ? 'no' : 'yes'} -- <command>), or add --judgment when the evidence is the real output rather than the exit code`); }
       evidence = `${command} → exit ${r.code}${judgment ? ' (judged on its output)' : ''}: ${rec.tail.slice(-200)}`;
     }
     j.alleged[id].status = st; j.alleged[id].evidence = evidence;
     settle(s); save(s, { ev: 'reproduce', id, status: st, evidence }); C.status();
   },
   stepback() {
-    const s = load(), size = a.shift(), targets = (opt('--targets') || '').split(',').filter(Boolean), known = rubric().crit.map((c) => c.id);
-    if (!['small', 'replan'].includes(size)) die('stepback small --targets <IDs> "<the step back>" | stepback replan DEFINE|EXPLORE "<the re-plan>" (a full step back is the loop-breakers\', in their packets)');
+    const s = load(), size = a.shift(), targets = (opt('--targets') || '').split(',').filter(Boolean), known = allIds();
+    if (!['small', 'replan'].includes(size)) die('stepback small [--targets <IDs>] "<the step back>" | stepback replan DEFINE|EXPLORE "<the re-plan>" (a full step back is the loop-breakers\', in their packets)');
     allowed(s, 'stepback ' + size);
     for (const t of targets) if (!known.includes(t)) die(`unknown criterion ${t}; the rubric has ${known.join(', ')}`);
     if (size === 'small') {
-      const t = text('the step back: the whole, the class and root cause, what to remove, the real property, the one correction'); s.prevent = { t: now(), targets: targets.length ? targets : null };
-      s.stepbacks.push({ size, targets: s.prevent.targets, text: t, t: now() }); save(s, { ev: 'stepback', size, targets, text: t }); return console.log('small step back recorded (PREVENT)');
+      const t = text('the step back: the whole, the class and root cause, what to remove, the real property, the one correction'); s.entry.prevent = { t: now(), targets: targets.length ? targets : null };
+      s.stepbacks.push({ size, state: s.state, targets: s.entry.prevent.targets, text: t, t: now() }); save(s, { ev: 'stepback', size, targets, text: t });
+      return console.log(`step back recorded${['ADOPT', 'DEFINE', 'LOOP'].includes(s.state) ? `; now the one-block: ${CMD} block "<the next action, whole>"` : ''}`);
     }
     const choice = a.shift();
     if (!s.entry.answer) die(`the re-plan follows the user's comment: ${CMD} answer "<their words>"`);
     if (!['DEFINE', 'EXPLORE'].includes(choice)) die('stepback replan DEFINE|EXPLORE "<the re-plan>"');
+    if (choice === 'EXPLORE' && s.route !== 'FULL') die(`a FOCUSED task never explores: ${CMD} stepback replan DEFINE "<the re-plan>"`);
     if (s.entry.duelers.length < 2) die(`two loop-breakers take the full step back with the user's comment first: ${CMD} call dueler (twice)`);
     const t = text('the re-plan: the step at fault, what changes, what is removed'); s.entry.replan = { choice, text: t, t: now() }; s.entry.approved = null;
     s.stepbacks.push({ size, choice, targets: targets.length ? targets : s.targets, text: t, t: now() }); save(s, { ev: 'stepback', size, choice, text: t });
-    console.log(`re-plan recorded (${choice}); show it to the user, then: ${CMD} approve "<their words>"`);
+    console.log(`re-plan recorded (${choice}); show it to the user (the ask card), then: ${CMD} approve "<their yes>", or ${CMD} answer "<their new comment>"`);
+  },
+  block() { // the second half of a prevent: the next action written whole on the board before it is taken
+    const s = load(), file = opt('--file'), e = s.entry; allowed(s, 'block');
+    if (!e.prevent) die(`the step back comes first, then the one-block: ${CMD} stepback small "<the whole, the cause, what to remove, the real property, the correction>"`);
+    if (e.block) die(`this step has its one-block: ${NEXT_HINT}`);
+    if (file && !fs.existsSync(path.resolve(ROOT, file))) die(`no file ${file}: ${CMD} block --file <path> | ${CMD} block "<the next action, whole>"`);
+    const t = file ? fs.readFileSync(path.resolve(ROOT, file), 'utf8').trim() : text('the next action, whole (the one-block card)');
+    if (!t) die(`the one-block is empty: ${CMD} block "<the next action, whole>"`);
+    e.block = { t: now() }; s.blocks.push({ state: s.state, text: t, t: now() }); save(s, { ev: 'block', text: t }); console.log('one-block recorded on the board (## Next action)');
   },
   approve() { const s = load(); allowed(s, 'approve'); if (!s.entry.replan) die(`approve follows the re-plan: ${CMD} stepback replan DEFINE|EXPLORE "<the re-plan>"`); const t = text("the user's words"); s.entry.approved = { t: now(), text: t }; save(s, { ev: 'approve', text: t }); console.log(`the user approved the re-plan: ${CMD} advance ${s.entry.replan.choice}`); },
   blocked() { const s = load(); allowed(s, 'blocked'); const t = text('what blocks the work'); blocked(s, t); save(s, { ev: 'blocked', text: t }); console.log(`blocked: ${CMD} advance ASK, and re-define with the user`); },
-  answer() { const s = load(); allowed(s, 'answer'); const t = text("the user's words"); s.entry.answer = t; save(s, { ev: 'answer', text: t }); console.log('answer recorded'); },
+  answer() { // the user's words; a new comment at ASK restarts the re-plan
+    const s = load(); allowed(s, 'answer'); const t = text("the user's words");
+    if (s.state === 'ASK' && s.entry.replan) { s.entry.replan = null; s.entry.approved = null; s.entry.duelers = []; }
+    s.entry.answer = t; save(s, { ev: 'answer', text: t }); console.log('answer recorded');
+  },
   resolve() { const s = load(), [i, ...how] = a, p = s.proposals[+i]; if (!p || !how.join(' ').trim()) die('resolve <n> "<applied in DEFINE | dismissed: reason>"'); p.resolved = how.join(' '); save(s, { ev: 'resolve', i }); console.log('resolved'); },
   veto() { const s = load(); s.vetoes.push(text('the option and why it is vetoed')); save(s, { ev: 'veto', text: a.join(' ') }); console.log('veto recorded'); },
   backlog() { const s = load(); s.backlog.push(text('the backlog item')); save(s, { ev: 'backlog', text: a.join(' ') }); console.log('backlog recorded'); },
@@ -547,19 +579,19 @@ const C = {
     for (const k of states) { const seen = new Set([k]), q = [k]; let ok = false; while (q.length) { const x = q.shift(); if (FLOW[x].terminal) { ok = true; break; } for (const t of FLOW[x].next) if (!seen.has(t)) { seen.add(t); q.push(t); } } if (!ok) errs.push(k + ': cannot end'); }
     const reach = new Set(Object.values(FLOWDATA.start)), q = [...reach]; while (q.length) for (const t of FLOW[q.shift()].next) if (!reach.has(t)) { reach.add(t); q.push(t); }
     for (const k of states) if (!reach.has(k)) errs.push(k + ': unreachable');
-    for (const [r, v] of Object.entries(RUNGS)) { if (!FLOW[v.state]) errs.push(`rung ${r}: unknown state ${v.state}`); for (const st of Object.keys(JUDGE_KIND)) if (!FLOW[st].next.includes(v.state)) errs.push(`${st}: rung ${r}'s state ${v.state} is not reachable from a judging`); }
+    for (const [st, kind] of Object.entries(JUDGE_KIND)) for (const t of [AFTER_PASS[kind], RETRY[kind], ...Object.values(RUNGS).map((r) => r.state)]) if (!FLOW[st].next.includes(t)) errs.push(`${st}: an outcome leads to ${t}, which is not in next`);
     for (const r of Object.keys(RUNGS)) for (const o of ['ADVANCED', 'STALLED', 'REGRESSION']) if (!LADDER[r] || !LADDER[r][o] || !RUNGS[LADDER[r][o][1]] || LADDER[r][o][0] < 1) errs.push(`ladder ${r}/${o}: missing or unknown rung`);
     if (RUNGS[LADDER.blocked].state !== FLOWDATA.escape) errs.push('the ladder does not end with the user');
     for (const k of states) if (!bound({ state: k, role: 'root' }).length) errs.push(`${k}: no root card bound`);
     for (const r of ROLES) if (!FLOWDATA.cards.some((b) => b.role === r)) errs.push(`no card bound for role ${r}`);
     for (const b of FLOWDATA.cards) { const c = CARDS[b.card]; if (!c || !c.body) errs.push(`binding ${b.state}/${b.role}: card "${b.card}" missing`); else if (!c.states.includes(b.state) || c.role !== b.role || (c.rung || undefined) !== b.rung) errs.push(`card "${b.card}": front matter (${c.state}${c.rung ? '/' + c.rung : ''}/${c.role}) differs from flow.json (${b.state}${b.rung ? '/' + b.rung : ''}/${b.role})`); }
     for (const [id, c] of Object.entries(CARDS)) { if (c.bad) errs.push(`${c.file}: ${c.bad}`); else { if (!FLOWDATA.cards.some((b) => b.card === id)) errs.push(`card "${id}" (${c.file}) is bound to nothing in flow.json`); for (const st of c.states) if (!FLOWDATA.cards.some((b) => b.card === id && b.state === st)) errs.push(`card "${id}" names ${st}, which flow.json does not bind`); } }
-    console.log(errs.length ? 'FLOW INVALID\n- ' + errs.join('\n- ') : `FLOW OK: ${states.length} states, each reachable and able to end; ${Object.keys(CARDS).length} cards, each bound; ladder of ${Object.keys(RUNGS).length} rungs reachable from every judging, ending with the user`);
+    console.log(errs.length ? 'FLOW INVALID\n- ' + errs.join('\n- ') : `FLOW OK: ${states.length} states, each reachable and able to end; ${Object.keys(CARDS).length} cards, each bound; every outcome leads to an allowed state; the ladder ends with the user`);
     process.exit(errs.length ? 1 : 0);
   },
   flow() {
     const L = Object.keys(RUNGS).map((r) => `${r} (${RUNGS[r].state}): ` + ['ADVANCED', 'STALLED', 'REGRESSION'].map((o) => { const [n, to] = LADDER[r][o]; return `${o} ${to === r ? 'stays' : n === 1 ? '→ ' + to : `stays (${ordinal(n)} → ${to})`}`; }).join(' · '));
-    console.log(Object.entries(FLOW).map(([k, v]) => `${k} → ${v.next.join(', ') || '(end)'}`).join('\n') + `\n\nLADDER (counted per rung since the last PASS or rung change; PASS → ${LADDER.pass}; BLOCKED → ${LADDER.blocked}; a one-shot: good → ${LADDER.oneshot.good}, bad → ${LADDER.oneshot.bad})\n` + L.join('\n'));
+    console.log(Object.entries(FLOW).map(([k, v]) => `${k} → ${v.next.join(', ') || '(end)'}`).join('\n') + `\n\nLADDER (counted per rung since the last PASS or rung change; PASS → ${LADDER.pass}; BLOCKED → ${LADDER.blocked})\n` + L.join('\n') + `\nAfter a PASS: one-shot → next-shot (LOOP) → release gate (GATE) → ACCEPT. On the small rung the next attempt is another next-shot; an unsound one-shot (STALLED, REGRESSION) is shot again.`);
   },
   card() { const id = a[0]; if (!CARDS[id] || !CARDS[id].body) die(`unknown card ${id || ''}; cards: ${Object.keys(CARDS).join(', ')}`); console.log(CARDS[id].body); },
   version() { console.log(VERSION); },
