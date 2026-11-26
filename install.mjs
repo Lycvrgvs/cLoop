@@ -23,7 +23,7 @@ import {
   setDocLimit,
 } from "./codex-config.mjs";
 
-export const PACKAGE_VERSION = "1.2.0";
+export const PACKAGE_VERSION = "1.2.2";
 export const SCHEMA_VERSION = 1;
 export const START_MARKER = "<!-- cloop:managed:start -->";
 export const END_MARKER = "<!-- cloop:managed:end -->";

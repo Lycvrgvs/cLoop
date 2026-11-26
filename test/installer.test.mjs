@@ -66,7 +66,7 @@ test("empty repository install creates AGENTS.md, one block, state, and doctor p
     assert.equal(existsSync(path.join(dir, ".codex", "hooks", "cloop-turn.mjs")), true);
     assert.equal(await readFile(path.join(dir, ".cloop", "cloop.mjs"), "utf8"), await readFile(path.join(ROOT, "cloop.mjs"), "utf8"));
     assert.equal(await readFile(path.join(dir, ".cloop", "flow.json"), "utf8"), await readFile(path.join(ROOT, "flow.json"), "utf8"));
-    assert.equal(await readFile(path.join(dir, ".cloop", "cards", "loop.md"), "utf8"), await readFile(path.join(ROOT, "cards", "loop.md"), "utf8"));
+    assert.equal(await readFile(path.join(dir, ".cloop", "cards", "next-shot.md"), "utf8"), await readFile(path.join(ROOT, "cards", "next-shot.md"), "utf8"));
     assert.equal(existsSync(path.join(dir, "cloop.mjs")), false);
     const toml = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
     assert.match(toml, /\[features\.multi_agent_v2\]/);
@@ -759,13 +759,13 @@ test("the installed engine validates its flow and cards; doctor flags a stale ca
     await cli(dir, ["install", "--profile", "town"]);
     const { execFileSync } = await import("node:child_process");
     assert.match(execFileSync(process.execPath, [path.join(dir, ".cloop", "cloop.mjs"), "check"], { cwd: dir, encoding: "utf8" }), /^FLOW OK/);
-    await writeFile(path.join(dir, ".cloop", "cards", "loop.md"), "---\ncard: loop\n---\nedited\n");
+    await writeFile(path.join(dir, ".cloop", "cards", "next-shot.md"), "---\ncard: next-shot\n---\nedited\n");
     await writeFile(path.join(dir, "cloop.mjs"), "#!/usr/bin/env node\n// cLoop tool: the flow, the escalation ladder, the guards\n");
     const doctor = await cli(dir, ["doctor"]);
-    assert.ok(doctor.warnings.some((w) => /\.cloop\/cards\/loop\.md does not match/.test(w)));
+    assert.ok(doctor.warnings.some((w) => /\.cloop\/cards\/next-shot\.md does not match/.test(w)));
     assert.ok(doctor.warnings.some((w) => /left from cLoop 1\.1\.0/.test(w)));
     await cli(dir, ["update"]);
-    assert.equal(await readFile(path.join(dir, ".cloop", "cards", "loop.md"), "utf8"), await readFile(path.join(ROOT, "cards", "loop.md"), "utf8"));
+    assert.equal(await readFile(path.join(dir, ".cloop", "cards", "next-shot.md"), "utf8"), await readFile(path.join(ROOT, "cards", "next-shot.md"), "utf8"));
     assert.equal(existsSync(path.join(dir, "cloop.mjs")), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
