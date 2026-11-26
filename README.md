@@ -2,21 +2,22 @@
 
 **cLoop** is a council loop for coding agents. The *c* stands for **council**: cLoop is short for *council-Loop*, and everywhere else it is simply cLoop.
 
-You state the goal. A council of two independent models helps turn it into a rubric of single-property criteria, tagged CORE or NON-CORE. The root builds the stage as one self-contained one-shot, runs it on real input, and closes what is left in small loops; the council judges every loop against the rubric on a committed candidate. When a failure resists the root, the same two models become loop-breakers; when they cannot close it either, you decide a re-plan. Nothing counts as done until the release gate passes: the product end to end on a real run, the full suite, and a full review.
+You state the goal. A council of two independent models helps turn it into a rubric of single-property criteria, tagged CORE or NON-CORE. The root builds the whole product as one self-contained one-shot and runs it on real input; then one next-shot repairs what failed and moves it into the architecture's layout. The council judges every step against the whole rubric on a committed candidate. When a failure resists the root, the same two models become loop-breakers; when they cannot close it either, you decide a re-plan. Nothing counts as done until the release gate passes: the product end to end on a real run, the full suite, and a full review.
 
 This `claude` branch runs everything in **Claude Code**: the root is a Claude Code session and every member, explorer and builder is a native subagent launched with the `Agent` tool and an explicit `model` and `effort`. No Codex needed.
 
-## What is new in 1.2.0: cards, and the flow as data
+## What is new in 1.2.2: one climb, and a prevent before every step
 
-1.1.0 made every step decidable: code enforces what can be computed, the model judges what needs judgment, and your decisions stay yours. 1.2.0 finishes that split by moving every instruction out of the code:
+1.2.0 moved every instruction into cards and the flow into data. 1.2.2 changes the flow itself, so the model builds the way it builds best: one coherent block at a time.
 
-- **The flow is data.** `flow.json` holds the states, the allowed transitions, the evidence each exit needs (named guards), which command runs in which state, the escalation ladder and which card binds where. The engine, `cloop.mjs`, interprets it; the diagram below is generated from it, and a test fails when they differ.
-- **Instructions are cards.** Each state's steps and each sub-agent's brief live in `cards/*.md`, small Markdown files with a header saying where they bind. `status` prints the cards for the current state; every call writes its role's card at the top of the packet it hands the model. The main prompt keeps the big picture (flow, laws, vetoes, signals) and an index of the cards.
-- **Fewer, better guards.** Every refusal was audited: duplicates merged, text-length minimums and the PREFLIGHT claims removed, and every refusal now names what is missing and the command that provides it. A reproduced violation is now a run the engine makes itself, not a report of one.
-- **Signals computed from the record.** `status` and `report` point out the same criterion failing again, a failure returning after it was established, a diff growing while nothing is established, and checks green while the real run fails. They inform and never block.
-- **The explore choice is judged, not counted.** The engine computes which options are eligible; the root chooses by the merge guideline; an amalgam is judged again.
-
-For you this means a shorter prompt the model reads in full, instructions that arrive exactly when they apply, and a flow you can read, diagram and change without touching code. The engine is installed with its flow and cards under `.cloop/`.
+- **One climb instead of two stages.** The core stage, the core gate and the separate non-core stage are gone: the build is one features stage that ends at one end-to-end gate. CORE and NON-CORE stay as rubric classes.
+- **One-shot, then one next-shot.** The one-shot builds the whole product as one self-contained file, with every core and non-core criterion, and the council judges it: it passes when every core criterion works. Then the next-shot, ONE small loop, repairs every failing criterion and moves the one-shot into the architecture's layout in the same block, never a chain of repair loops followed by a refactor. The release gate refuses until a next-shot has passed.
+- **A prevent before every step.** Every loop, shot and phase starts with a step back on the whole, then a one-block: the next action written whole on the board (`block`, shown under `## Next action`) before anything is built. A one-shot is its own block; DEFINE drafts spec, architecture and rubric together as one block.
+- **The council judges everything.** The one-shot, every next-shot and the release gate are judged on every criterion.
+- **Focused and full climb the same way.** Only FULL may explore.
+- **The re-define asks you twice, in plain words:** first your comment, then your yes to the plan it produced, with what differs from your comment marked. A no with a new comment starts the re-plan again.
+- **Safer when `.git` is read-only.** The task's own store keeps your checkout's branch, cannot push anywhere, and is probed before use; at acceptance you are told where the work is.
+- **Tasks started on 1.2.0 continue.** Their state migrates on load.
 
 ## How it works
 
@@ -31,13 +32,12 @@ flowchart LR
   DEFINE --> ONESHOT
   DEFINE --> LOOP
   DEFINE --> DUEL
-  DEFINE --> GATE
   EXPLORE --> LOOP
-  EXPLORE --> GATE
+  EXPLORE --> ONESHOT
   EXPLORE --> DUEL
   EXPLORE --> ASK
   ONESHOT --> LOOP
-  ONESHOT --> GATE
+  ONESHOT --> ONESHOT
   ONESHOT --> DUEL
   ONESHOT --> ASK
   LOOP --> LOOP
@@ -48,7 +48,6 @@ flowchart LR
   DUEL --> GATE
   DUEL --> DUEL
   DUEL --> ASK
-  GATE --> ONESHOT
   GATE --> LOOP
   GATE --> DUEL
   GATE --> ACCEPT
@@ -79,10 +78,10 @@ flowchart LR
 
 Models have three default habits: they add where they should delete, they fix details where they should look at the whole, and they satisfy the measure where they should satisfy the goal. cLoop counters each one with mechanics, not exhortation:
 
-- **Step backs on the whole.** Every build opens with a step back that reads all the evidence, names the class of failure and its root cause, considers removal first, and decides one correction for the whole property. It comes in three sizes: yours in a few lines, the loop-breakers' in a few paragraphs, and a re-plan you approve.
+- **Step backs on the whole.** Every step opens with a step back that reads all the evidence, names the class of failure and its root cause, considers removal first, and decides one correction for the whole property; then the next action is written whole, as one block, before anything is built. The step back comes in three sizes: yours in a few paragraphs, the loop-breakers' in a page, and a re-plan you approve.
 - **Real runs, not proxies.** A passing test is not rubric satisfaction, and agreement between judges is not evidence. Every MET names the nearest counterfeit it excludes and a boundary case that was run; a violation counts only once the root reproduces it.
-- **One-shot first, loops second.** A single self-contained file shows early whether the approach is right. A bad one-shot goes to a re-plan, never into a long chain of patches. The small loop is one mechanic used two ways: it builds what the one-shot left and corrects what a council found.
-- **Escalate only as far as the failure requires.** Progress keeps the root in its small loops; repeated stalls or regressions bring in the loop-breakers; only what they cannot close comes to you.
+- **One-shot, then one next-shot.** A single self-contained file shows early whether the approach is right; one next-shot then repairs and refactors it in one block, never a long chain of patches. An unsound one-shot is shot again.
+- **Escalate only as far as the failure requires.** Progress keeps the root on the small rung; repeated stalls or regressions bring in the loop-breakers; only what they cannot close comes to you.
 - **Cheap mechanics first.** Town Council is built to run real work on small accounts; High Council spends more where the task is hardest.
 
 ## The method in one screen
@@ -90,15 +89,16 @@ Models have three default habits: they add where they should delete, they fix de
 ```text
 ROUTE    DIRECT (one local edit) | FOCUSED: DEFINE → CLIMB | FULL: DEFINE → EXPLORE (when triggered) → CLIMB
 ADOPT    an existing project is adopted first: keep, simplify or replace, with you
-DEFINE   goals with you → both members draft the rubric → CORE / NON-CORE → freeze
+DEFINE   goals with you → spec, architecture and rubric as one block, drafted by both members → CORE / NON-CORE → freeze
          (provisional until the first council, then frozen hard; changes need your words)
 EXPLORE  2–4 parallel single-file one-shots, judged blind; the engine computes the eligible; the root chooses
-CLIMB    CORE stage, then NON-CORE stage; each = PREVENT → one-shot → small loops → gate
+PREVENT  every loop, shot and phase: a step back on the whole, then the next action as one block
+CLIMB    one-shot (one file) → council → next-shot (repair + refactor) → release gate (end to end)
 ACCEPT   the release gate passed: you accept, or your feedback goes back to DEFINE or EXPLORE
 
-LADDER   small: your step back + a small loop      (3rd ADVANCED, 2nd STALLED or REGRESSION → full)
+LADDER   small: your prevent + the next attempt    (3rd ADVANCED, 2nd STALLED or REGRESSION → full)
          full: two loop-breakers, one merge         (ADVANCED → small; 2nd STALLED or REGRESSION → re-define)
-         re-define: your comment → their re-plan → your approval   (ADVANCED → small)
+         re-define: your comment → their re-plan → your yes   (ADVANCED → small)
 ```
 
 Outcomes are PASS, ADVANCED, STALLED, REGRESSION or BLOCKED, computed by the engine. After every judging the root sends you `node .cloop/cloop.mjs report` and keeps working.
@@ -122,7 +122,7 @@ Both members come from the same lab on this branch, so every review names the ne
 | `codex` | Codex | native Codex subagents |
 | `claude` | Claude Code | native Claude Code subagents |
 
-Every branch carries the same method, engine, flow and cards at 1.2.0. Only the roles subsection of the profile, the installer target and the builders' invocation differ.
+Every branch carries the same method, engine, flow and cards at 1.2.2. Only the roles subsection of the profile, the installer target and the builders' invocation differ.
 
 ## For AI coding agents (Claude Code, Codex, Cursor, OpenCode)
 
@@ -182,7 +182,7 @@ cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed i
 | `--builders cheap` | Sonnet 5.5 medium | Haiku 5.5 xhigh |
 | `--builders cheap-100` | Sonnet 5.5 xhigh | Haiku 5.5 xhigh |
 
-The rows come from cheapGPT 1.10.0's published `profiles/roles.json` (the `claude-edition` edition), copied into `vendor/cheapgpt-builders.json` at release time. Nothing is fetched at install.
+The rows come from cheapGPT 1.10.2's published `profiles/roles.json` (the `claude-edition` edition), copied into `vendor/cheapgpt-builders.json` at release time. Nothing is fetched at install.
 
 ```bash
 node /path/to/cLoop/install.mjs install --project . --profile town --builders cheap
@@ -229,5 +229,6 @@ tools/flow-diagram.mjs   writes the README diagram from flow.json
 vendor/cheapgpt-builders.json  vendored builder rows and their cheapGPT source
 cheapgpt-guard.mjs       stops install and update when cheapGPT is installed
 test/installer.test.mjs  the installer
-test/repo.test.mjs       flow.json, the cards, the README diagram and the engine
+test/repo.test.mjs       flow.json, the cards and the README diagram
+test/cloop.test.mjs      the engine: every guard refusing once, then passing; the git store; migration
 ```

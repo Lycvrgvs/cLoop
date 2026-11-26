@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.2.0",
+  "packageVersion": "1.2.2",
   "harness": "claude",
   "edition": "claude",
   "buildersSource": {
     "package": "cheapGPT",
-    "version": "1.10.0",
+    "version": "1.10.2",
     "edition": "claude-edition",
-    "commit": "c1b7855a22101caf8a0334df9a0bfba7146019af"
+    "commit": "71e731bf81626abfb1b57c8be3c934afeb97c167"
   },
   "profiles": {
     "town": {
@@ -19,7 +19,7 @@
       "root": "Opus 5.5 medium",
       "council": "Sonnet 5.5 xhigh + Opus 5.5 medium",
       "explorer": "Sonnet 5.5 medium",
-      "planningMode": "CLOOP town. One flow, kept by the engine. At every step: `node .cloop/cloop.mjs status` → act → record through the engine → `advance`; the cards status prints carry the detail; a refusal names the next step; never edit cloop/state.json, log.jsonl or board.md by hand. Remove before adding, whole before detail, goal before measure; the size of a change answers the size of the problem. The small loop builds and corrects; every one-shot, loop and explore opens with PREVENT. Every step back: the whole before the detail, all the evidence, the class and root cause, removal first, the real property, one correction for the whole property. The engine computes each outcome and the rung: small (your step back) → full (two loop-breakers) → re-define (the user approves a re-plan); PASS returns to small, ADVANCED de-escalates from full and re-define. BEST moves only forward. Real runs judge; settle every NOT_MET with a run the engine makes; never shorten a run, a wait or a judging step. Judges are read-only and blind; loop-breakers write in their own worktrees; builders, when listed, take only build steps. Watch for a spiral and a virtuous cycle. The user is in the loop: ask their decisions with a recommendation and keep working on the rest. Send `report` after every council and `report --final` first at ACCEPT. After any compaction, reread this file and run `status`.",
+      "planningMode": "CLOOP town. One flow, kept by the engine. At every step: `node .cloop/cloop.mjs status` → act → record through the engine → `advance`; the cards status prints carry the detail; a refusal names the next step; never edit cloop/state.json, log.jsonl or board.md by hand. Remove before adding, whole before detail, goal before measure; the size of a change answers the size of the problem. Every loop, shot and phase starts with a prevent: a step back on the whole, then the one-block of the next action (a one-shot is its own block). Climb: the one-shot (the whole product, one file) → council → the next-shot (one small loop: repair and refactor in one block) → the release gate → the user. The council judges every criterion at every step; settle every NOT_MET with a run the engine makes; never shorten a run, a wait or a judging step. The engine computes each outcome and the rung: small (your step back) → full (two loop-breakers) → re-define (the user's comment, then their yes to a re-plan); PASS returns to small. BEST moves only forward. Judges are read-only and blind; loop-breakers write in their own worktrees; builders, when listed, take only build steps. Watch for a spiral and a virtuous cycle. The user is in the loop: ask their decisions in plain words with a recommendation and keep working on the rest. Send `report` after every council and `report --final` first at ACCEPT. After any compaction, reread this file and run `status`.",
       "implementationMode": "",
       "builders": {
         "cheap": {
@@ -43,7 +43,7 @@
       "root": "Opus 5.5 high",
       "council": "Opus 5.5 xhigh + Fable 5.1 xhigh",
       "explorer": "Opus 5.5 medium",
-      "planningMode": "CLOOP high. One flow, kept by the engine. At every step: `node .cloop/cloop.mjs status` → act → record through the engine → `advance`; the cards status prints carry the detail; a refusal names the next step; never edit cloop/state.json, log.jsonl or board.md by hand. Remove before adding, whole before detail, goal before measure; the size of a change answers the size of the problem. The small loop builds and corrects; every one-shot, loop and explore opens with PREVENT. Every step back: the whole before the detail, all the evidence, the class and root cause, removal first, the real property, one correction for the whole property. The engine computes each outcome and the rung: small (your step back) → full (two loop-breakers) → re-define (the user approves a re-plan); PASS returns to small, ADVANCED de-escalates from full and re-define. BEST moves only forward. Real runs judge; settle every NOT_MET with a run the engine makes; never shorten a run, a wait or a judging step. Judges are read-only and blind; loop-breakers write in their own worktrees; builders, when listed, take only build steps. Watch for a spiral and a virtuous cycle. The user is in the loop: ask their decisions with a recommendation and keep working on the rest. Send `report` after every council and `report --final` first at ACCEPT. After any compaction, reread this file and run `status`.",
+      "planningMode": "CLOOP high. One flow, kept by the engine. At every step: `node .cloop/cloop.mjs status` → act → record through the engine → `advance`; the cards status prints carry the detail; a refusal names the next step; never edit cloop/state.json, log.jsonl or board.md by hand. Remove before adding, whole before detail, goal before measure; the size of a change answers the size of the problem. Every loop, shot and phase starts with a prevent: a step back on the whole, then the one-block of the next action (a one-shot is its own block). Climb: the one-shot (the whole product, one file) → council → the next-shot (one small loop: repair and refactor in one block) → the release gate → the user. The council judges every criterion at every step; settle every NOT_MET with a run the engine makes; never shorten a run, a wait or a judging step. The engine computes each outcome and the rung: small (your step back) → full (two loop-breakers) → re-define (the user's comment, then their yes to a re-plan); PASS returns to small. BEST moves only forward. Judges are read-only and blind; loop-breakers write in their own worktrees; builders, when listed, take only build steps. Watch for a spiral and a virtuous cycle. The user is in the loop: ask their decisions in plain words with a recommendation and keep working on the rest. Send `report` after every council and `report --final` first at ACCEPT. After any compaction, reread this file and run `status`.",
       "implementationMode": "",
       "builders": {
         "cheap": {

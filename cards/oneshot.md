@@ -4,8 +4,8 @@ state: ONESHOT
 role: root
 loads: status, in ONESHOT
 ---
-Generate the stage in one file, then judge it.
-1. PREVENT: your small step back: what the stage's criteria demand, the real inputs, the representation you handle best.
-2. Build all the stage's new logic as one self-contained file (or give it to the builders: dynamic and mechanical cards), run it on real input, integrate it into the product and reproduce its outputs on the same inputs (`{{cmd}} run -- <command>`). Commit: judges review HEAD.
-3. Council: `{{cmd}} call judge` twice; append the scope's rubric lines and the run evidence; `{{cmd}} judge oneshot <idA> <idB>`; settle every NOT_MET with `reproduce`.
-4. After the council: PASS → GATE. Otherwise judge the one-shot itself: good (a sound base; what is left is a few behaviours) → LOOP; bad (a wrong base) → ASK, a re-define with the user. A REGRESSION follows the ladder.
+The one-shot: the whole product, once, as one block.
+1. Prevent: your small step back on the whole: what every criterion demands, the real inputs, the representation you handle best. No separate one-block: the one-shot is the block.
+2. Build ONE self-contained file with every core and non-core criterion, in a familiar representation (yourself, or the builders: dynamic and mechanical cards), and run it on real input (`{{cmd}} run -- <command>`). Layout is ignored on purpose. Rosetta: when the target is unfamiliar or forces several files, write it in the representation you handle best; the next-shot translates it. Commit it: judges review HEAD.
+3. Council: `{{cmd}} call judge` twice, append the rubric and the run evidence, `{{cmd}} judge oneshot <idA> <idB>`, settle every NOT_MET with `reproduce`.
+4. The outcome: PASS when every core criterion works (non-core may be partial: the next-shot repairs it) and ADVANCED (a sound base with some core failing) both lead to the next-shot. STALLED (an unsound base) or REGRESSION (it broke what worked) are shot again from BEST after a new small step back, until the ladder calls the duel.

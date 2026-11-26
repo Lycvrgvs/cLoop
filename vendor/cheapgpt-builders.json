@@ -3,9 +3,9 @@
   "edition": "claude",
   "source": {
     "package": "cheapGPT",
-    "version": "1.10.0",
+    "version": "1.10.2",
     "edition": "claude-edition",
-    "commit": "c1b7855a22101caf8a0334df9a0bfba7146019af"
+    "commit": "71e731bf81626abfb1b57c8be3c934afeb97c167"
   },
   "profiles": {
     "cheap": {
