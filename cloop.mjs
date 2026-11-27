@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '1.2.2';
+const VERSION = '1.2.3';
 const ROOT = process.cwd();
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(ROOT, 'cloop');
@@ -30,7 +30,7 @@ function readFlow() {
   if (!fs.existsSync(p)) die(`flow.json is missing next to the engine (${p}): reinstall with install.mjs update`);
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
-const FLOWDATA = readFlow(), FLOW = FLOWDATA.states, LADDER = FLOWDATA.ladder, RUNGS = FLOWDATA.rungs;
+const FLOWDATA = readFlow(), FLOW = FLOWDATA.states, LADDER = FLOWDATA.ladder, RUNGS = FLOWDATA.rungs, PREVENT = FLOWDATA.prevent || {};
 function readCards() { // cards/<id>.md: front matter (card, state, rung, role, loads), then the body
   const dir = path.join(HERE, 'cards'), cards = {};
   if (!fs.existsSync(dir)) return cards;
@@ -55,11 +55,14 @@ function load() {
   if (!fs.existsSync(F.state)) die(`no task here: ${CMD} init <FOCUSED|FULL> <slug> "<reason>" (DIRECT uses no tool)`);
   const s = JSON.parse(fs.readFileSync(F.state, 'utf8'));
   if (!FLOW[s.state]) die(`this task was started by cLoop 1.1.0 or earlier (state ${s.state}): finish it with that version, or ${CMD} clean --force and start again`);
-  if ('stage' in s) { // a task started on 1.2.0 (a core and a non-core stage) continues on one features stage
+  if (s.version !== VERSION) { // a task saved by an earlier version continues; the prevent is owed from its next state entry
     const from = s.version;
-    if (s.prevent) s.entry.prevent = s.prevent;
-    for (const k of ['stage', 'prevent']) delete s[k];
-    s.entry.block = null; s.blocks = []; s.version = VERSION;
+    if ('stage' in s) { // 1.2.0: a core and a non-core stage become one features stage
+      if (s.prevent) s.entry.prevent = s.prevent;
+      for (const k of ['stage', 'prevent']) delete s[k];
+      s.entry.block = null; s.blocks = [];
+    }
+    s.entry.legacy = true; s.version = VERSION;
     save(s, { ev: 'migrate', from, to: VERSION });
   }
   return s;
@@ -155,7 +158,7 @@ const GUARDS = {
   rubricValid: () => rubric().errors.map((x) => `rubric: ${x} (fix cloop/rubric.md, then ${CMD} freeze)`),
   rubricFrozen: (s) => s.frozen === rubric().hash ? [] : [`freeze the rubric: ${CMD} freeze`],
   baselineRun: (s) => s.entry.runs.some((r) => r.kind === 'run' && !r.cwd) ? [] : [`the baseline real run on HEAD: ${CMD} run -- <command>`],
-  prevented: (s) => [...(s.entry.prevent ? [] : [`the step back: ${CMD} stepback small "<the whole, the cause, what to remove, the real property, the correction>"`]), ...(s.entry.block ? [] : [`the one-block: ${CMD} block "<the next action, whole>"`])],
+  prevented: (s) => owed(s, null), // the state's exit checks its prevent again
   adoptRecord: (s) => s.adopt ? [] : [`the adoption decision: ${CMD} adopt keep|simplify|replace "<what exists, what works, the user's answer>"`],
   adoptRubric: (s, to) => {
     if (!s.adopt) return [];
@@ -200,16 +203,30 @@ function needs(s, to, why) {
   for (const g of FLOWDATA.always) n.push(...GUARDS[g](s, to, why));
   if (to === FLOWDATA.escape && s.state !== FLOWDATA.escape) return n; // the user decides; no exit evidence is owed
   for (const g of [...(st.exit || []), ...((st.to || {})[to] || [])]) n.push(...GUARDS[g](s, to, why));
+  if (PREVENT[s.state] && !FLOW[to].terminal) n.push(...GUARDS.prevented(s, to)); // the user may stop without one
   return [...new Set(n)];
 }
-function allowed(s, name) { // a command runs only in the states flow.json names for it
+function allowed(s, name, call) { // a command runs only in the states flow.json names for it, and a work command only after the state's prevent
   const where = FLOWDATA.commands[name];
   if (where && !where.includes(s.state)) die(`${name} belongs to ${where.join(' or ')}; this task is in ${s.state}: ${NEXT_HINT}`);
+  const p = owed(s, name, call); if (p.length) die(`PREVENT first: ${name} in ${s.state} waits for ${p.join('; ')}`);
 }
-function preventFirst(s) { // the prevent before building: the step back, and in a next-shot the one-block too (a one-shot is its own block)
-  if (!['ONESHOT', 'LOOP', 'EXPLORE'].includes(s.state)) return;
-  const p = s.state === 'LOOP' ? GUARDS.prevented(s) : s.entry.prevent ? [] : GUARDS.prevented(s).slice(0, 1);
-  if (p.length) die(`PREVENT first: ${p.join('; ')} (the step-back${s.state === 'LOOP' ? ' and one-block cards' : ' card'})`);
+const STEPBACK = {
+  small: () => `the step back: ${CMD} stepback small "<the whole, the cause, what to remove, the real property, the correction>"`,
+  replan: () => `the loop-breakers' re-plan: ${CMD} call dueler (twice), then ${CMD} stepback replan DEFINE|EXPLORE "<the re-plan>"`,
+  full: (id) => `loop-breaker ${id}'s full step back: ${CMD} stepback full --call ${id} "<its step back, from its reply>"`,
+};
+const BLOCK = (st, id) => id ? `loop-breaker ${id}'s one-block: ${CMD} block --call ${id} "<its one-block, from its reply>"` : `the one-block${st === 'ASK' ? ' of the new definition' : ''}: ${CMD} block "<${st === 'ASK' ? 'the new definition' : 'the next action'}, whole>"`;
+const perCalls = (s, p) => Object.keys(s.calls).filter((id) => s.calls[id].role === p.per && s.calls[id].t >= s.entry.t);
+const stepped = (s, p) => p.stepback === 'replan' ? s.entry.replan : s.entry.prevent;
+function owed(s, name, call) { // flow.json's prevent row for this state: what is still owed before command `name` (null: the state's exit)
+  const p = PREVENT[s.state], e = s.entry, draft = (p && p.draft || []).includes(name);
+  if (!p || e.legacy || (name && !draft && !(p.before || []).includes(name))) return [];
+  if (p.per) { // each loop-breaker's own prevent, recorded by the root from its reply: a record, not a witness
+    const ids = perCalls(s, p), mine = ids.includes(call) ? [call] : ids;
+    return mine.flatMap((id) => [...(s.calls[id].prevent ? [] : [STEPBACK[p.stepback](id)]), ...(p.block && !s.calls[id].block ? [BLOCK(s.state, id)] : [])]);
+  }
+  return [...(stepped(s, p) ? [] : [STEPBACK[p.stepback]()]), ...(p.block && !draft && !e.block ? [BLOCK(s.state)] : [])];
 }
 function gateRuns(s, sha, before) { // the release gate runs the product end to end and the full suite on the commit it certifies
   const ok = (k) => s.runs.some((r) => r.kind === k && r.code === 0 && r.sha === sha && (!before || r.t < before));
@@ -392,7 +409,9 @@ const C = {
       if (files.some((f) => f !== 'cloop/rubric.md') || rubric().hash !== s.frozen) die(`the delivery commit changes more than the rubric's vetoes and backlog (${files.join(', ')}): ${CMD} git reset --hard ${(s.gateSha || '').slice(0, 7)}, then advance DONE again`);
     }
     if (to === 'EXPLORE' && EXPLORE_TRIGGERS[why]) s.notes.push(`EXPLORE trigger: ${why} — ${EXPLORE_TRIGGERS[why]}`);
-    s.require = null; s.state = to; s.entry = freshEntry([...s.targets]); save(s, { ev: 'advance', to, why }); C.status(); // what fails when a step starts is what it must see failing first
+    const carry = (PREVENT[s.state] || {}).carries && s.entry.approved && !FLOW[to].terminal ? { t: now(), carried: s.state } : null; // the approved re-plan and its one-block are the next state's prevent
+    s.require = null; s.state = to; s.entry = freshEntry([...s.targets]); if (carry) { s.entry.prevent = carry; s.entry.block = carry; }
+    save(s, { ev: 'advance', to, why }); C.status(); // what fails when a step starts is what it must see failing first
   },
   adopt() { const s = load(), d = a.shift(); allowed(s, 'adopt'); if (!['keep', 'simplify', 'replace'].includes(d)) die('adopt keep|simplify|replace "<what exists, what works on the baseline, the protected checks, the user\'s answer>"'); s.adopt = d; save(s, { ev: 'adopt', decision: d, reason: text("what exists and the user's answer") }); console.log('adoption: ' + d); },
   freeze() {
@@ -409,8 +428,8 @@ const C = {
   },
   run() {
     const s = load(), kind = flag('--e2e') ? 'e2e' : flag('--suite') ? 'suite' : flag('--before') ? 'before' : 'run', judgment = flag('--judgment'), cwd = opt('--cwd');
-    if (kind !== 'run') allowed(s, 'run --' + kind);
-    if (!s.entry.judged) preventFirst(s);
+    const at = cwd && Object.keys(s.calls).find((id) => s.calls[id].worktree === path.resolve(ROOT, cwd));
+    allowed(s, kind === 'run' ? 'run' : 'run --' + kind, at);
     if (a[0] === '--') a.shift(); const command = a.join(' '); if (!command) die('run [--e2e|--suite|--before [--judgment]] [--cwd <dir>] -- <command>');
     const dir = cwd ? path.resolve(ROOT, cwd) : ROOT, t0 = Date.now(), r = sh(command, [], { cwd: dir, shell: true, timeout: 3 * 3600e3 });
     const rec = { kind, command, cwd: cwd ? dir : null, code: r.code, sha: head(cwd ? dir : undefined), secs: Math.round((Date.now() - t0) / 100) / 10, t: now(), tail: r.out.split('\n').slice(-12).join('\n'), judgment };
@@ -426,7 +445,6 @@ const C = {
       if (s.state === 'GATE') gateRuns(s, head());
     }
     if (role === 'dueler' && s.state === 'DUEL') { const x = GUARDS.somethingToFix(s); if (x.length) die(x[0]); }
-    if (['dynamic', 'mechanical'].includes(role)) preventFirst(s);
     const commit = at || (['judge', 'member'].includes(role) ? head() : s.best || head()), id = crypto.randomBytes(4).toString('hex');
     const run = path.join(DIR, 'runs', id), wt = path.join(DIR, 'wt', id); fs.mkdirSync(run, { recursive: true });
     const r = git(['worktree', 'add', '-q', '-b', 'cl/' + id, wt, commit]); if (r.code) die(`the worktree could not be created:\n${r.out}`);
@@ -451,7 +469,6 @@ const C = {
       const last = Math.max(...e.runs.filter((r) => r.cwd).map((r) => Date.parse(r.t)));
       if (!e.runs.some((r) => !r.cwd && r.code === 0 && Date.parse(r.t) > last)) die(`run the merged product on HEAD: ${CMD} run -- <command>`);
     }
-    if (['loop', 'oneshot'].includes(kind)) preventFirst(s);
     for (const id of [idA, idB]) if (!s.calls[id] || s.calls[id].role !== 'judge') die(`${id} is not a judge call: ${CMD} call judge`);
     if (idA === idB) die(`two different judges: ${CMD} call judge, twice`);
     if (!s.snap) die(`start the judge calls with ${CMD} call judge`);
@@ -519,14 +536,22 @@ const C = {
     settle(s); save(s, { ev: 'reproduce', id, status: st, evidence }); C.status();
   },
   stepback() {
-    const s = load(), size = a.shift(), targets = (opt('--targets') || '').split(',').filter(Boolean), known = allIds();
-    if (!['small', 'replan'].includes(size)) die('stepback small [--targets <IDs>] "<the step back>" | stepback replan DEFINE|EXPLORE "<the re-plan>" (a full step back is the loop-breakers\', in their packets)');
+    const s = load(), size = a.shift(), targets = (opt('--targets') || '').split(',').filter(Boolean), call = opt('--call'), known = allIds(), p = PREVENT[s.state] || {};
+    if (!['small', 'full', 'replan'].includes(size)) die('stepback small [--targets <IDs>] "<the step back>" | stepback full --call <id> "<the loop-breaker\'s step back, from its reply>" | stepback replan DEFINE|EXPLORE "<the re-plan>"');
     allowed(s, 'stepback ' + size);
     for (const t of targets) if (!known.includes(t)) die(`unknown criterion ${t}; the rubric has ${known.join(', ')}`);
+    const then = p.block ? `; now ${BLOCK(s.state, call)}` : '';
+    if (size === 'full') { // the root records the loop-breaker's own step back from its reply
+      if (!perCalls(s, p).includes(call)) die(`stepback full records a loop-breaker's step back against its call: ${CMD} stepback full --call <${perCalls(s, p).join('|') || 'a dueler call'}> "<its step back, from its reply>"`);
+      if (!fs.existsSync(path.join(DIR, 'runs', call, 'out.md'))) die(`the record comes from the loop-breaker's reply: save it verbatim as ${rel(path.join(DIR, 'runs', call, 'out.md'))}, then ${CMD} stepback full --call ${call} "<its step back>"`);
+      const t = text("the loop-breaker's step back, as its reply states it"); s.calls[call].prevent = { t: now() };
+      s.stepbacks.push({ size, state: s.state, call, targets: s.targets, text: t, t: now() }); save(s, { ev: 'stepback', size, call, text: t });
+      return console.log(`loop-breaker ${call}'s step back recorded${then}`);
+    }
     if (size === 'small') {
       const t = text('the step back: the whole, the class and root cause, what to remove, the real property, the one correction'); s.entry.prevent = { t: now(), targets: targets.length ? targets : null };
       s.stepbacks.push({ size, state: s.state, targets: s.entry.prevent.targets, text: t, t: now() }); save(s, { ev: 'stepback', size, targets, text: t });
-      return console.log(`step back recorded${['ADOPT', 'DEFINE', 'LOOP'].includes(s.state) ? `; now the one-block: ${CMD} block "<the next action, whole>"` : ''}`);
+      return console.log(`step back recorded${then}`);
     }
     const choice = a.shift();
     if (!s.entry.answer) die(`the re-plan follows the user's comment: ${CMD} answer "<their words>"`);
@@ -535,22 +560,24 @@ const C = {
     if (s.entry.duelers.length < 2) die(`two loop-breakers take the full step back with the user's comment first: ${CMD} call dueler (twice)`);
     const t = text('the re-plan: the step at fault, what changes, what is removed'); s.entry.replan = { choice, text: t, t: now() }; s.entry.approved = null;
     s.stepbacks.push({ size, choice, targets: targets.length ? targets : s.targets, text: t, t: now() }); save(s, { ev: 'stepback', size, choice, text: t });
-    console.log(`re-plan recorded (${choice}); show it to the user (the ask card), then: ${CMD} approve "<their yes>", or ${CMD} answer "<their new comment>"`);
+    console.log(`re-plan recorded (${choice})${then}; show both to the user (the ask card), then: ${CMD} approve "<their yes>", or ${CMD} answer "<their new comment>"`);
   },
   block() { // the second half of a prevent: the next action written whole on the board before it is taken
-    const s = load(), file = opt('--file'), e = s.entry; allowed(s, 'block');
-    if (!e.prevent) die(`the step back comes first, then the one-block: ${CMD} stepback small "<the whole, the cause, what to remove, the real property, the correction>"`);
-    if (e.block) die(`this step has its one-block: ${NEXT_HINT}`);
-    if (file && !fs.existsSync(path.resolve(ROOT, file))) die(`no file ${file}: ${CMD} block --file <path> | ${CMD} block "<the next action, whole>"`);
+    const s = load(), file = opt('--file'), call = opt('--call'), e = s.entry, p = PREVENT[s.state] || {}; allowed(s, 'block');
+    const rec = p.per ? perCalls(s, p).includes(call) && s.calls[call] : e; // in the duel each loop-breaker's one-block is its own, recorded against its call
+    if (!rec) die(`in the ${s.state.toLowerCase()} each loop-breaker's one-block is recorded against its call: ${CMD} block --call <${perCalls(s, p).join('|') || 'a dueler call'}> "<its one-block, from its reply>"`);
+    if (!(p.per ? rec.prevent : stepped(s, p))) die(`the step back comes first, then the one-block: ${STEPBACK[p.stepback](call)}`);
+    if (rec.block) die(`this step has its one-block: ${NEXT_HINT}`);
+    if (file && !fs.existsSync(path.resolve(ROOT, file))) die(`no file ${file}: ${CMD} block --file <path> | ${BLOCK(s.state, call)}`);
     const t = file ? fs.readFileSync(path.resolve(ROOT, file), 'utf8').trim() : text('the next action, whole (the one-block card)');
-    if (!t) die(`the one-block is empty: ${CMD} block "<the next action, whole>"`);
-    e.block = { t: now() }; s.blocks.push({ state: s.state, text: t, t: now() }); save(s, { ev: 'block', text: t }); console.log('one-block recorded on the board (## Next action)');
+    if (!t) die(`the one-block is empty: ${BLOCK(s.state, call)}`);
+    rec.block = { t: now() }; s.blocks.push({ state: s.state, ...(call ? { call } : {}), text: t, t: now() }); save(s, { ev: 'block', ...(call ? { call } : {}), text: t }); console.log('one-block recorded on the board (## Next action)');
   },
   approve() { const s = load(); allowed(s, 'approve'); if (!s.entry.replan) die(`approve follows the re-plan: ${CMD} stepback replan DEFINE|EXPLORE "<the re-plan>"`); const t = text("the user's words"); s.entry.approved = { t: now(), text: t }; save(s, { ev: 'approve', text: t }); console.log(`the user approved the re-plan: ${CMD} advance ${s.entry.replan.choice}`); },
   blocked() { const s = load(); allowed(s, 'blocked'); const t = text('what blocks the work'); blocked(s, t); save(s, { ev: 'blocked', text: t }); console.log(`blocked: ${CMD} advance ASK, and re-define with the user`); },
   answer() { // the user's words; a new comment at ASK restarts the re-plan
     const s = load(); allowed(s, 'answer'); const t = text("the user's words");
-    if (s.state === 'ASK' && s.entry.replan) { s.entry.replan = null; s.entry.approved = null; s.entry.duelers = []; }
+    if (s.state === 'ASK' && s.entry.replan) { s.entry.replan = null; s.entry.block = null; s.entry.approved = null; s.entry.duelers = []; }
     s.entry.answer = t; save(s, { ev: 'answer', text: t }); console.log('answer recorded');
   },
   resolve() { const s = load(), [i, ...how] = a, p = s.proposals[+i]; if (!p || !how.join(' ').trim()) die('resolve <n> "<applied in DEFINE | dismissed: reason>"'); p.resolved = how.join(' '); save(s, { ev: 'resolve', i }); console.log('resolved'); },
@@ -575,6 +602,12 @@ const C = {
       for (const t of Object.keys(v.to || {})) if (!v.next.includes(t)) errs.push(`${k}: guards for ${t}, which is not in next`);
     }
     for (const g of FLOWDATA.always) if (!GUARDS[g]) errs.push(`always: unknown guard ${g}`);
+    for (const [k, p] of Object.entries(PREVENT)) { // each row names commands of its state, and the commands that record its prevent
+      if (!FLOW[k] || FLOW[k].terminal) { errs.push(`prevent ${k}: not a working state`); continue; }
+      for (const c of ['stepback ' + p.stepback, ...(p.block ? ['block'] : [])]) if (!(FLOWDATA.commands[c] || []).includes(k)) errs.push(`prevent ${k}: ${c} is not a command of ${k}`);
+      for (const c of [...(p.before || []), ...(p.draft || [])]) { const w = FLOWDATA.commands[c]; if (!C[c.split(' ')[0]] || (w && !w.includes(k))) errs.push(`prevent ${k}: ${c} is not a command of ${k}`); }
+      if (p.per && !ROLES.includes(p.per)) errs.push(`prevent ${k}: unknown role ${p.per}`);
+    }
     for (const [c, where] of Object.entries(FLOWDATA.commands)) { if (!C[c.split(' ')[0]]) errs.push(`commands: unknown command ${c}`); for (const w of where) if (!FLOW[w]) errs.push(`commands ${c}: unknown state ${w}`); }
     for (const k of states) { const seen = new Set([k]), q = [k]; let ok = false; while (q.length) { const x = q.shift(); if (FLOW[x].terminal) { ok = true; break; } for (const t of FLOW[x].next) if (!seen.has(t)) { seen.add(t); q.push(t); } } if (!ok) errs.push(k + ': cannot end'); }
     const reach = new Set(Object.values(FLOWDATA.start)), q = [...reach]; while (q.length) for (const t of FLOW[q.shift()].next) if (!reach.has(t)) { reach.add(t); q.push(t); }
@@ -586,12 +619,12 @@ const C = {
     for (const r of ROLES) if (!FLOWDATA.cards.some((b) => b.role === r)) errs.push(`no card bound for role ${r}`);
     for (const b of FLOWDATA.cards) { const c = CARDS[b.card]; if (!c || !c.body) errs.push(`binding ${b.state}/${b.role}: card "${b.card}" missing`); else if (!c.states.includes(b.state) || c.role !== b.role || (c.rung || undefined) !== b.rung) errs.push(`card "${b.card}": front matter (${c.state}${c.rung ? '/' + c.rung : ''}/${c.role}) differs from flow.json (${b.state}${b.rung ? '/' + b.rung : ''}/${b.role})`); }
     for (const [id, c] of Object.entries(CARDS)) { if (c.bad) errs.push(`${c.file}: ${c.bad}`); else { if (!FLOWDATA.cards.some((b) => b.card === id)) errs.push(`card "${id}" (${c.file}) is bound to nothing in flow.json`); for (const st of c.states) if (!FLOWDATA.cards.some((b) => b.card === id && b.state === st)) errs.push(`card "${id}" names ${st}, which flow.json does not bind`); } }
-    console.log(errs.length ? 'FLOW INVALID\n- ' + errs.join('\n- ') : `FLOW OK: ${states.length} states, each reachable and able to end; ${Object.keys(CARDS).length} cards, each bound; every outcome leads to an allowed state; the ladder ends with the user`);
+    console.log(errs.length ? 'FLOW INVALID\n- ' + errs.join('\n- ') : `FLOW OK: ${states.length} states, each reachable and able to end; ${Object.keys(PREVENT).length} working states, each refusing its first work command until its prevent; ${Object.keys(CARDS).length} cards, each bound; every outcome leads to an allowed state; the ladder ends with the user`);
     process.exit(errs.length ? 1 : 0);
   },
   flow() {
     const L = Object.keys(RUNGS).map((r) => `${r} (${RUNGS[r].state}): ` + ['ADVANCED', 'STALLED', 'REGRESSION'].map((o) => { const [n, to] = LADDER[r][o]; return `${o} ${to === r ? 'stays' : n === 1 ? '→ ' + to : `stays (${ordinal(n)} → ${to})`}`; }).join(' · '));
-    console.log(Object.entries(FLOW).map(([k, v]) => `${k} → ${v.next.join(', ') || '(end)'}`).join('\n') + `\n\nLADDER (counted per rung since the last PASS or rung change; PASS → ${LADDER.pass}; BLOCKED → ${LADDER.blocked})\n` + L.join('\n') + `\nAfter a PASS: one-shot → next-shot (LOOP) → release gate (GATE) → ACCEPT. On the small rung the next attempt is another next-shot; an unsound one-shot (STALLED, REGRESSION) is shot again.`);
+    console.log(Object.entries(FLOW).map(([k, v]) => `${k} → ${v.next.join(', ') || '(end)'}`).join('\n') + `\n\nLADDER (counted per rung since the last PASS or rung change; PASS → ${LADDER.pass}; BLOCKED → ${LADDER.blocked})\n` + L.join('\n') + `\n\nPREVENT (refused before it: the state's work commands; its exit checks it again)\n` + Object.entries(PREVENT).map(([k, p]) => `${k}: ${p.per ? 'each ' + p.per + "'s own " : ''}${p.stepback === 'replan' ? 're-plan' : p.stepback + ' step back'}${p.block ? ' + one-block' : ''}${p.carries ? ', carried into the next state once approved' : ''} — before ${[...(p.draft || []).map((c) => c + ' (step back only)'), ...p.before].join(', ')}`).join('\n') + `\nAfter a PASS: one-shot → next-shot (LOOP) → release gate (GATE) → ACCEPT. On the small rung the next attempt is another next-shot; an unsound one-shot (STALLED, REGRESSION) is shot again.`);
   },
   card() { const id = a[0]; if (!CARDS[id] || !CARDS[id].body) die(`unknown card ${id || ''}; cards: ${Object.keys(CARDS).join(', ')}`); console.log(CARDS[id].body); },
   version() { console.log(VERSION); },

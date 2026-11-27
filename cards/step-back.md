@@ -1,6 +1,6 @@
 ---
 card: step-back
-state: ADOPT, DEFINE, EXPLORE, ONESHOT, LOOP
+state: ADOPT, DEFINE, EXPLORE, ONESHOT, LOOP, GATE
 role: root
 loads: status, in every state you build or define in; the loop-breaker's packet carries it too
 ---

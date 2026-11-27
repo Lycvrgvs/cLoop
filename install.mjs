@@ -15,7 +15,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { cheapgptMessage, detectCheapgpt } from "./cheapgpt-guard.mjs";
 
-export const PACKAGE_VERSION = "1.2.2";
+export const PACKAGE_VERSION = "1.2.3";
 export const SCHEMA_VERSION = 1;
 export const START_MARKER = "<!-- cloop:managed:start -->";
 export const END_MARKER = "<!-- cloop:managed:end -->";

@@ -13,7 +13,7 @@ Route, at task start, in one line: `CLOOP: <DIRECT|FOCUSED|FULL> — <reason>`. 
 
 (ADOPT) → DEFINE → (EXPLORE, FULL only) → CLIMB: ONESHOT → council → LOOP (the next-shot) → release gate → ACCEPT (the user accepts, or gives feedback → DEFINE or EXPLORE)
 
-Every loop, shot and phase starts with a prevent: a step back (look at the whole), then a one-block (write the next action whole on the board). A one-shot is its own block. The one-shot builds the whole product as one file; the next-shot is ONE small loop that repairs every failing criterion and moves the one-shot into the architecture's layout in the same block. The council judges every criterion at every step: the one-shot (it passes when every core criterion works), the next-shot and the release gate, the one gate (an end-to-end real run of everything). The outcome, computed by the engine: PASS, ADVANCED (new criteria established, none lost), STALLED (nothing new), REGRESSION (an established criterion lost), or BLOCKED (a role failed twice, or the environment stops the work). BEST, the commit everything builds from, moves only on PASS or ADVANCED. After a PASS: one-shot → next-shot → release gate → the user.
+Every loop, shot and phase starts with a prevent: a step back (look at the whole), then a one-block (write the next action whole on the board). A one-shot is its own block, and so is each explorer's one-shot. In every working state the engine refuses the state's first work command (a run, a call, a judgment, a freeze, a merge) until the prevent is recorded, and the state's exit checks it again. In the duel each loop-breaker's full step back and one-block are its own, recorded by you from its reply; at a re-define the new definition is the re-plan's one-block, written before the user's yes, and once approved it is the next state's prevent. The one-shot builds the whole product as one file; the next-shot is ONE small loop that repairs every failing criterion and moves the one-shot into the architecture's layout in the same block. The council judges every criterion at every step: the one-shot (it passes when every core criterion works), the next-shot and the release gate, the one gate (an end-to-end real run of everything). The outcome, computed by the engine: PASS, ADVANCED (new criteria established, none lost), STALLED (nothing new), REGRESSION (an established criterion lost), or BLOCKED (a role failed twice, or the environment stops the work). BEST, the commit everything builds from, moves only on PASS or ADVANCED. After a PASS: one-shot → next-shot → release gate → the user.
 
 The ladder counts outcomes per rung since the last PASS or rung change; PASS returns to small; BLOCKED goes to re-define.
 
@@ -34,7 +34,7 @@ The tool. At every step: `node .cloop/cloop.mjs status` (the state, its cards, t
 ### CARDS
 
 `status` prints the cards bound to the current state; `call` writes the role's card at the top of each packet; `node .cloop/cloop.mjs card <id>` prints any card.
-- `step-back`, `one-block`: the two halves of every prevent (`stepback`, `block`; the loop-breaker's packet carries both).
+- `step-back`, `one-block`: the two halves of every prevent (`stepback`, `block`; a loop-breaker's are recorded with `--call <id>`; its packet carries both cards).
 - `adopt`: adopting an existing project and its rubric (ADOPT).
 - `define`: spec, architecture and rubric as one block, the rubric's format and judgment (DEFINE). `member`: a member's draft brief (its packet).
 - `merge`: the merge guideline (wherever candidates or council outcomes are merged).
@@ -59,7 +59,7 @@ The user fixes the model hierarchy for the task; it does not change during it.
 - The two members are different models from different labs: their findings complement each other.
 - `node .cloop/cloop.mjs call <judge|member|explorer|dueler>` creates the call's id, worktree and packet, opened with the role's card; append the assignment. Member A: Claude Code's native `Agent` tool, never as a fork (a fork runs on your model), with `model` `opus` for Opus 5.5 and `effort` xhigh, prompted "Read <packet path> and follow it."; save its final reply verbatim as `cloop/runs/<call-id>/out.md`. Member B and explorers: `codex exec -m <model> -c model_reasoning_effort=<effort> -s workspace-write -C "<its worktree>" --json -o "$REPO/cloop/runs/<call-id>/out.md" "Read <packet path> and follow it." < /dev/null > "$REPO/cloop/runs/<call-id>/events.jsonl"`, with the model and effort from the table, run as background jobs and waited for in this turn; their model and effort are confirmed from `events.jsonl`. Before the first `codex exec`, confirm Codex is logged in and that no Codex instruction file it loads from the worktree up to the filesystem root holds an orchestration policy.
 
-**Builders** (`--builders cheap`: cheapGPT 1.10.2, `exp` edition; the BUILDERS section applies):
+**Builders** (`--builders cheap`: cheapGPT 1.10.3, `exp` edition; the BUILDERS section applies):
 
 | Builder | Model | Writes |
 |---|---|---|
