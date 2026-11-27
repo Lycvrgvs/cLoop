@@ -14,7 +14,7 @@ const RUBRIC = (extra = '') => `# rubric\n## Goals\n- G1 | "a counter that adds"
 - C2 | CORE | add rejects non-numbers | evidence: node app.js a 1 | pass: a 1 → error | fail: a 1 → NaN | boundary: 1e3 is a number
 - C3 | NON-CORE | --help prints usage | evidence: node app.js --help | pass: usage shown | fail: nothing | boundary: -h too${extra}\n`;
 const C4 = '\n- C4 | CORE | add sums three numbers | evidence: node app.js 1 2 3 | pass: 6 | fail: 3 | boundary: 0 0 0';
-const asserted = {}; // guard[:branch] → how many times its refusal was asserted (the audit test reads it)
+const asserted = {}; // guard[:branch], or prevent:<STATE> → how many times its refusal was asserted (the audit test reads it)
 const FAIL = 'node -e "process.exit(1)"', PASS = 'node -e 1';
 
 function repo({ existing = false } = {}) {
@@ -30,6 +30,10 @@ function repo({ existing = false } = {}) {
   const no = (re, ...x) => { // a command's refusal; a transition's refusal goes through refuse()
     assert.notEqual(x[0], 'advance', 'assert a transition with refuse(<guard>, ...)');
     const r = cl(...x); assert.notEqual(r.code, 0, `expected a refusal: ${x.join(' ')}\n${r.out}`); assert.match(r.out, re); return r.out;
+  };
+  const first = (st, re, ...x) => { // a state's work command refused before its prevent, asserted once per prevent row
+    const out = no(re, ...x); assert.match(out, new RegExp(`PREVENT first: ${x[0]}[^\\n]* in ${st} waits for`)); assert.match(out, CMDRE, `${st}: the refusal names the command that records the prevent`);
+    asserted['prevent:' + st] = (asserted['prevent:' + st] || 0) + 1; return out;
   };
   const refuse = (tags, res, to, ...more) => { // each named guard's refusal at the transition it gates, asserted once in the whole suite; each names the command that satisfies it
     const r = cl('advance', to, ...more); assert.notEqual(r.code, 0, `expected ${tags} to refuse advance ${to}\n${r.out}`);
@@ -54,9 +58,11 @@ function repo({ existing = false } = {}) {
   const defined = (route = 'FOCUSED', extra = '') => { ok('init', route, 'demo', 'a small counter'); prevent(); fs.writeFileSync(path.join(d, 'cloop', 'rubric.md'), RUBRIC(extra)); ok('freeze'); };
   const oneshot = (metIds, failIds, o) => { prevent(false); ok('run', '--', PASS); commit(); return council('oneshot', metIds, failIds, o); };
   const nextshot = (metIds, failIds, o) => { prevent(); if (state().targets.length) ok('run', '--before', '--', FAIL); commit(); ok('run', '--', PASS); return council('loop', metIds, failIds, o); };
-  const gate = (metIds, failIds, o) => { ok('run', '--e2e', '--', PASS); ok('run', '--suite', '--', PASS); return council('gate', metIds, failIds, o); };
-  const duel = (metIds, failIds) => { const a = ok('call', 'dueler'), b = ok('call', 'dueler'); for (const o of [a, b]) ok('run', '--cwd', o.match(/^worktree: (\S+)/m)[1], '--', PASS); commit(); ok('run', '--', PASS); return council('merge', metIds, failIds); };
-  return { d, g, cl, ok, no, refuse, state, id, reply, met, notMet, commit, council, prevent, defined, oneshot, nextshot, gate, duel };
+  const gate = (metIds, failIds, o) => { prevent(); ok('run', '--e2e', '--', PASS); ok('run', '--suite', '--', PASS); return council('gate', metIds, failIds, o); };
+  const wt = (out) => out.match(/^worktree: (\S+)/m)[1];
+  const breaker = (cid) => { reply(cid, 'step back: the whole; one-block: the fix'); ok('stepback', 'full', '--call', cid, 'the whole, from its reply'); ok('block', '--call', cid, 'its fix, whole, from its reply'); };
+  const duel = (metIds, failIds) => { const a = ok('call', 'dueler'), b = ok('call', 'dueler'); for (const o of [a, b]) { breaker(id(o)); ok('run', '--cwd', wt(o), '--', PASS); } commit(); ok('run', '--', PASS); return council('merge', metIds, failIds); };
+  return { d, g, cl, ok, no, first, refuse, state, id, reply, met, notMet, commit, council, prevent, defined, oneshot, nextshot, gate, wt, breaker, duel };
 }
 const ALL = ['C1', 'C2', 'C3'];
 
@@ -66,22 +72,27 @@ test('M: FOCUSED climbs one-shot → next-shot → release gate; each exit refus
   r.ok('init', 'FOCUSED', 'demo', 'a small counter');
   r.refuse(['prevented', 'rubricValid', 'rubricFrozen'], [/the step back: node/, /rubric: cloop\/rubric\.md is missing/, /freeze the rubric/], 'ONESHOT');
   r.refuse('exploreAllowed:focused', /a FOCUSED task never explores/, 'EXPLORE');
-  r.prevent(); fs.writeFileSync(path.join(r.d, 'cloop', 'rubric.md'), RUBRIC()); r.ok('freeze'); r.ok('advance', 'ONESHOT');
+  fs.writeFileSync(path.join(r.d, 'cloop', 'rubric.md'), RUBRIC());
+  r.first('DEFINE', /PREVENT first: freeze in DEFINE waits for the step back: node[\s\S]*the one-block: node/, 'freeze');
+  assert.doesNotMatch(r.no(/PREVENT first: call member in DEFINE waits for the step back/, 'call', 'member'), /one-block/, 'the members draft the one-block: they wait only for the step back');
+  r.ok('stepback', 'small', 'the goals: a counter that adds'); r.ok('call', 'member'); r.no(/freeze in DEFINE waits for the one-block: node/, 'freeze');
+  r.ok('block', 'spec, architecture and rubric, whole'); r.ok('freeze'); r.ok('advance', 'ONESHOT');
   assert.match(r.ok('status'), /ONE self-contained file with every core and non-core criterion/);
   r.refuse(['realRun', 'judged'], [/a passing real run of the one-shot/, /the council: node/], 'LOOP');
-  r.no(/PREVENT first: the step back/, 'run', '--', PASS);
+  r.first('ONESHOT', /PREVENT first: run in ONESHOT waits for the step back: node/, 'run', '--', PASS); r.no(/block belongs to/, 'block', 'x');
   let s = r.oneshot(['C1'], ['C2', 'C3']);
   assert.equal(s.history[0].outcome, 'ADVANCED', 'a core criterion failing: a sound base, the next-shot repairs it');
   r.refuse('ladder:require', /the last outcome leads to LOOP/, 'ONESHOT');
   r.ok('advance', 'LOOP');
-  r.no(/PREVENT first: .*the one-block/, 'run', '--', PASS);
+  r.first('LOOP', /PREVENT first: run in LOOP waits for the step back: node[\s\S]*the one-block: node/, 'run', '--', PASS);
   r.refuse(['seenFailing', 'nextShotPassed'], [/seen failing on BEST before the repair/, /the release gate needs a next-shot that passed/], 'GATE');
   s = r.nextshot(ALL, [], { extra: 'RUBRIC: backlog a --verbose flag' });
   assert.equal(s.history[1].outcome, 'PASS'); assert.deepEqual(s.require, ['GATE']); assert.equal(s.history[1].scope.length, 3, 'the council judged every criterion');
   assert.match(fs.readFileSync(path.join(r.d, 'cloop', 'board.md'), 'utf8'), /## Next action\n\(LOOP, [^)]*\)\nthe next action, whole/);
   r.ok('advance', 'GATE');
-  r.no(/the release gate needs, before its judges:[\s\S]*run --e2e[\s\S]*run --suite/, 'call', 'judge');
-  s = r.gate(ALL, []); assert.equal(s.history[2].outcome, 'PASS'); r.ok('advance', 'ACCEPT');
+  r.first('GATE', /PREVENT first: run --e2e in GATE waits for the step back: node[\s\S]*the one-block: node/, 'run', '--e2e', '--', PASS);
+  r.prevent(); r.no(/the release gate needs, before its judges:[\s\S]*run --e2e[\s\S]*run --suite/, 'call', 'judge');
+  r.ok('run', '--e2e', '--', PASS); r.ok('run', '--suite', '--', PASS); s = r.council('gate', ALL, []); assert.equal(s.history[2].outcome, 'PASS'); r.ok('advance', 'ACCEPT');
   r.commit(); // a later commit: what would be delivered is no longer what was gated
   r.refuse(['finalReport', 'proposalsResolved', 'gatedHead'], [/the final report: node/, /resolve every rubric proposal/, /is not the gated commit/], 'DONE');
   assert.match(r.ok('report', '--final'), /Where the work is: branch cl\/demo/);
@@ -101,7 +112,8 @@ test('M: FULL explores; the ladder climbs to the duel and the re-define; a duel 
   r.refuse('exploreAllowed:trigger', /name the trigger: node/, 'EXPLORE');
   r.ok('advance', 'EXPLORE', '--why', 'mechanism');
   r.refuse('exploreSettled', /the options judged and one chosen/, 'LOOP');
-  r.prevent(false); r.commit();
+  r.first('EXPLORE', /PREVENT first: call explorer in EXPLORE waits for the step back: node/, 'call', 'explorer');
+  r.prevent(false); r.ok('call', 'explorer'); r.commit();
   const A = r.id(r.ok('call', 'judge')), B = r.id(r.ok('call', 'judge'));
   r.reply(A, [r.met(ALL, 'X/'), r.met(['C1'], 'Y/'), r.notMet(['C2', 'C3'], 'Y/')].join('\n')); r.reply(B, [r.met(ALL, 'X/'), r.met(ALL, 'Y/')].join('\n'));
   assert.match(r.ok('judge', 'explore', A, B, '--options', 'X,Y'), /X: CORE 2\/2, all 3\/3 — eligible\n- Y: CORE 1\/2, all 1\/3\n/);
@@ -113,7 +125,14 @@ test('M: FULL explores; the ladder climbs to the duel and the re-define; a duel 
   let s = r.nextshot(['C1', 'C3'], ['C2']); assert.equal(s.history[1].outcome, 'REGRESSION');
   r.ok('advance', 'LOOP'); s = r.nextshot(['C1', 'C3'], ['C2']); assert.equal(s.history[2].outcome, 'STALLED');
   r.ok('advance', 'LOOP'); s = r.nextshot(['C1', 'C3'], ['C2']); assert.equal(s.rung, 'full'); assert.deepEqual(s.require, ['DUEL']);
-  r.ok('advance', 'DUEL'); s = r.duel(['C1', 'C3'], ['C2']); r.ok('advance', 'DUEL'); s = r.duel(['C1', 'C3'], ['C2']);
+  r.ok('advance', 'DUEL'); const A2 = r.ok('call', 'dueler'), B2 = r.ok('call', 'dueler'), a2 = r.id(A2), b2 = r.id(B2); // each loop-breaker's own prevent, recorded against its call
+  r.first('DUEL', new RegExp(`PREVENT first: run in DUEL waits for loop-breaker ${a2}'s full step back: node[\\s\\S]*loop-breaker ${a2}'s one-block: node`), 'run', '--cwd', r.wt(A2), '--', PASS);
+  r.no(/save it verbatim as cloop\/runs\/\w+\/out\.md/, 'stepback', 'full', '--call', a2, 'x'); r.no(/recorded against its call: node/, 'block', 'x');
+  r.breaker(a2); r.ok('run', '--cwd', r.wt(A2), '--', PASS);
+  r.no(new RegExp(`run in DUEL waits for loop-breaker ${b2}'s full step back`), 'run', '--cwd', r.wt(B2), '--', PASS);
+  r.commit(); assert.doesNotMatch(r.no(/judge merge in DUEL waits for loop-breaker/, 'judge', 'merge', a2, b2), new RegExp(a2), 'a recorded loop-breaker is not owed again');
+  r.breaker(b2); r.ok('run', '--cwd', r.wt(B2), '--', PASS); r.ok('run', '--', PASS); s = r.council('merge', ['C1', 'C3'], ['C2']);
+  r.ok('advance', 'DUEL'); s = r.duel(['C1', 'C3'], ['C2']);
   assert.equal(s.rung, 'redefine'); assert.ok(s.ask);
   r.refuse('ladder:open', /a re-define is open .*: node \.cloop\/cloop\.mjs advance ASK/, 'LOOP');
   r.ok('advance', 'ASK');
@@ -121,24 +140,26 @@ test('M: FULL explores; the ladder climbs to the duel and the re-define; a duel 
   r.refuse('userAnswer', /the user's words: node/, 'DEFINE');
   r.ok('answer', 'drop the non-number check; numbers only');
   r.refuse('replanApproved', /the loop-breakers' re-plan: node/, 'DEFINE');
-  r.ok('call', 'dueler'); r.ok('call', 'dueler'); r.ok('stepback', 'replan', 'EXPLORE', 'the mechanism is wrong: parse with a grammar'); r.ok('approve', 'yes');
-  r.ok('advance', 'EXPLORE');
+  r.ok('call', 'dueler'); r.ok('call', 'dueler'); r.ok('stepback', 'replan', 'EXPLORE', 'the mechanism is wrong: parse with a grammar');
+  r.first('ASK', /PREVENT first: approve in ASK waits for the one-block of the new definition: node/, 'approve', 'yes');
+  r.ok('block', 'the new definition: a grammar parses the input; C2 reads it'); r.ok('approve', 'yes');
+  r.ok('advance', 'EXPLORE'); assert.equal(r.state().entry.prevent.carried, 'ASK', 'the approved re-plan is the prevent'); r.ok('call', 'explorer');
 });
 
 test('M: after a re-define the loop-breakers build; with nothing left open the duel is refused and the release gate named', () => {
   const r = repo(); r.defined('FULL'); r.ok('advance', 'ONESHOT');
   r.oneshot(['C1', 'C3'], ['C2']); r.ok('advance', 'LOOP'); r.ok('blocked', 'the parser cannot tell numbers from words'); r.ok('advance', 'ASK');
   r.ok('answer', 'numbers only: drop C2'); r.ok('call', 'dueler'); r.ok('call', 'dueler');
-  r.ok('stepback', 'replan', 'DEFINE', 'the criterion C2 asks for a parser the goal does not need; remove C2');
-  r.ok('approve', 'yes'); r.ok('advance', 'DEFINE');
-  fs.writeFileSync(path.join(r.d, 'cloop', 'rubric.md'), RUBRIC(C4)); r.prevent(); r.ok('freeze', '--user', 'yes, add the three-number sum');
+  r.ok('stepback', 'replan', 'DEFINE', 'the criterion C2 asks for a parser the goal does not need; remove C2'); r.ok('block', 'the rubric without C2, with C4');
+  r.ok('approve', 'yes'); r.ok('advance', 'DEFINE'); r.no(/this step has its one-block/, 'block', 'again'); // carried: no second prevent
+  fs.writeFileSync(path.join(r.d, 'cloop', 'rubric.md'), RUBRIC(C4)); r.ok('freeze', '--user', 'yes, add the three-number sum');
   r.refuse('redefineBuilds', /after a re-define, the loop-breakers build: node/, 'ONESHOT');
   r.ok('advance', 'DUEL'); let s = r.duel(['C1', 'C2', 'C3', 'C4'], []); assert.equal(s.history.at(-1).outcome, 'PASS');
   r.ok('advance', 'GATE'); s = r.gate(['C1', 'C3', 'C4'], ['C2']); assert.equal(s.history.at(-1).outcome, 'REGRESSION'); assert.deepEqual(s.require, ['LOOP'], 'a failing gate goes back to a next-shot on the current rung');
 
   const q = repo(); q.defined('FULL'); q.ok('advance', 'ONESHOT'); q.oneshot(['C1', 'C3'], ['C2']); q.ok('advance', 'LOOP'); q.ok('blocked', 'stuck'); q.ok('advance', 'ASK');
-  q.ok('answer', 'drop C2, it is not needed'); q.ok('call', 'dueler'); q.ok('call', 'dueler'); q.ok('stepback', 'replan', 'DEFINE', 'remove C2'); q.ok('approve', 'yes'); q.ok('advance', 'DEFINE');
-  fs.writeFileSync(path.join(q.d, 'cloop', 'rubric.md'), RUBRIC().replace('C1, C2, C3', 'C1, C3').replace(/\n- C2 [^\n]*/, '')); q.prevent(); q.ok('freeze', '--user', 'yes, drop C2');
+  q.ok('answer', 'drop C2, it is not needed'); q.ok('call', 'dueler'); q.ok('call', 'dueler'); q.ok('stepback', 'replan', 'DEFINE', 'remove C2'); q.ok('block', 'the rubric without C2'); q.ok('approve', 'yes'); q.ok('advance', 'DEFINE');
+  fs.writeFileSync(path.join(q.d, 'cloop', 'rubric.md'), RUBRIC().replace('C1, C2, C3', 'C1, C3').replace(/\n- C2 [^\n]*/, '')); q.ok('freeze', '--user', 'yes, drop C2');
   q.refuse('somethingToFix', /every criterion is established: a duel has nothing to fix; the release gate comes next/, 'DUEL');
 });
 
@@ -148,10 +169,11 @@ test('M: ASK opens only from the ladder or a blocker; the user may say no to the
   r.ok('advance', 'LOOP'); r.ok('blocked', 'the input format is unknown'); r.ok('advance', 'ASK');
   r.ok('answer', 'try the CSV format'); r.ok('call', 'dueler'); r.ok('call', 'dueler');
   r.no(/a FOCUSED task never explores/, 'stepback', 'replan', 'EXPLORE', 'a new mechanism');
-  r.ok('stepback', 'replan', 'DEFINE', 'define the CSV format as a criterion');
+  r.ok('stepback', 'replan', 'DEFINE', 'define the CSV format as a criterion'); r.ok('block', 'the CSV criterion, whole');
   r.ok('answer', 'no: keep JSON, add a schema'); const s = r.state();
-  assert.equal(s.entry.replan, null, 'a new comment starts the re-plan again'); assert.deepEqual(s.entry.duelers, []);
-  r.ok('call', 'dueler'); r.ok('call', 'dueler'); r.ok('stepback', 'replan', 'DEFINE', 'a JSON schema criterion'); r.ok('approve', 'yes'); r.ok('advance', 'DEFINE');
+  assert.equal(s.entry.replan, null, 'a new comment starts the re-plan again'); assert.equal(s.entry.block, null, 'and owes a new one-block'); assert.deepEqual(s.entry.duelers, []);
+  r.ok('call', 'dueler'); r.ok('call', 'dueler'); r.ok('stepback', 'replan', 'DEFINE', 'a JSON schema criterion'); r.no(/approve in ASK waits for the one-block/, 'approve', 'yes');
+  r.ok('block', 'the JSON schema criterion, whole'); r.ok('approve', 'yes'); r.ok('advance', 'DEFINE');
 });
 
 // ── adoption ──────────────────────────────────────────────────────────────────────────────
@@ -159,11 +181,12 @@ test('M: an existing project is adopted: a baseline run, a prevent, the decision
   const r = repo({ existing: true });
   r.ok('init', 'FOCUSED', 'demo', 'extend the counter');
   r.refuse(['baselineRun', 'adoptRecord'], [/the baseline real run on HEAD/, /the adoption decision: node/], 'ONESHOT');
-  r.ok('run', '--', PASS); r.prevent();
+  r.first('ADOPT', /PREVENT first: run in ADOPT waits for the step back: node[\s\S]*the one-block: node/, 'run', '--', PASS);
+  r.prevent(); r.ok('run', '--', PASS);
   r.ok('adopt', 'replace', 'app.js prints 1; no rubric yet; the user agreed');
   r.refuse('adoptRubric:replace', /replace: DEFINE writes the new rubric/, 'ONESHOT');
   const k = repo({ existing: true }); fs.mkdirSync(path.join(k.d, 'cloop')); fs.writeFileSync(path.join(k.d, 'cloop', 'rubric.md'), RUBRIC()); k.g('add', '-A'); k.g('commit', '-q', '-m', 'rubric');
-  k.ok('init', 'FOCUSED', 'demo', 'keep the rubric'); k.ok('run', '--', PASS); k.prevent(); k.ok('adopt', 'keep', 'the rubric is sound; the user agreed');
+  k.ok('init', 'FOCUSED', 'demo', 'keep the rubric'); k.prevent(); k.ok('run', '--', PASS); k.ok('adopt', 'keep', 'the rubric is sound; the user agreed');
   fs.writeFileSync(path.join(k.d, 'cloop', 'rubric.md'), RUBRIC(C4)); k.ok('freeze');
   k.refuse('adoptRubric:grows', /adoption never adds criteria \(4 > 3\)/, 'ONESHOT');
 });
@@ -179,10 +202,23 @@ test('M: a task started on 1.2.0 (core and non-core stages) migrates on load and
   old.entry = Object.fromEntries(ENTRY.map((k) => [k, s.entry[k]]));
   fs.writeFileSync(f, JSON.stringify(Object.fromEntries(KEYS.map((k) => [k, old[k]])), null, 2));
   assert.match(r.ok('status'), /STATE LOOP · FOCUSED/);
-  const m = r.state(); assert.equal(m.version, '1.2.2'); assert.ok(!('stage' in m) && !('prevent' in m)); assert.ok(m.entry.prevent, 'the recorded step back carries over');
-  assert.match(fs.readFileSync(path.join(r.d, 'cloop', 'log.jsonl'), 'utf8'), /"ev":"migrate","from":"1\.2\.0","to":"1\.2\.2"/);
+  const m = r.state(); assert.equal(m.version, '1.2.3'); assert.ok(!('stage' in m) && !('prevent' in m)); assert.ok(m.entry.prevent, 'the recorded step back carries over');
+  assert.match(fs.readFileSync(path.join(r.d, 'cloop', 'log.jsonl'), 'utf8'), /"ev":"migrate","from":"1\.2\.0","to":"1\.2\.3"/);
   r.ok('block', 'the whole product after the repair'); r.ok('run', '--before', '--', FAIL); r.commit(); r.ok('run', '--', PASS);
   assert.equal(r.council('loop', ALL, []).history.at(-1).outcome, 'PASS'); r.ok('advance', 'GATE');
+});
+
+test('M: a task saved by 1.2.2 mid-duel or mid-gate continues without a prevent; the next state entry owes one', () => {
+  const as122 = (r) => { const f = path.join(r.d, 'cloop', 'state.json'), s = r.state(); s.version = '1.2.2'; delete s.entry.legacy; s.entry.prevent = null; s.entry.block = null; fs.writeFileSync(f, JSON.stringify(s, null, 2)); };
+  const r = repo(); r.defined(); r.ok('advance', 'ONESHOT'); r.oneshot(['C1'], ['C2', 'C3']);
+  r.ok('advance', 'LOOP'); r.nextshot(['C1'], ['C2', 'C3']); r.ok('advance', 'LOOP'); assert.equal(r.nextshot(['C1'], ['C2', 'C3']).rung, 'full');
+  r.ok('advance', 'DUEL'); const a = r.ok('call', 'dueler'), b = r.ok('call', 'dueler'); as122(r); // 1.2.2 recorded no loop-breaker's prevent
+  r.ok('run', '--cwd', r.wt(a), '--', PASS); assert.equal(r.state().entry.legacy, true); assert.equal(r.state().version, '1.2.3');
+  assert.match(fs.readFileSync(path.join(r.d, 'cloop', 'log.jsonl'), 'utf8'), /"ev":"migrate","from":"1\.2\.2","to":"1\.2\.3"/);
+  r.ok('run', '--cwd', r.wt(b), '--', PASS); r.commit(); r.ok('run', '--', PASS); assert.equal(r.council('merge', ALL, []).history.at(-1).outcome, 'PASS');
+  r.ok('advance', 'GATE'); r.no(/PREVENT first: run --e2e in GATE/, 'run', '--e2e', '--', PASS); // the next entry owes its prevent
+  r.prevent(); r.ok('run', '--e2e', '--', PASS); r.ok('run', '--suite', '--', PASS); as122(r); // 1.2.2 had no prevent in GATE
+  assert.equal(r.council('gate', ALL, []).history.at(-1).outcome, 'PASS'); r.ok('advance', 'ACCEPT');
 });
 
 // ── the task's own git store, when .git refuses the method's writes ──────────────────────
@@ -232,7 +268,11 @@ test('M: a reproduction is a run the engine makes; signals are computed and neve
 
 // ── cards and flow as data ───────────────────────────────────────────────────────────────
 test('M: the flow validator accepts the shipped flow and cards; the re-define asks twice in plain words', () => {
-  const r = repo(); assert.match(r.cl('check').out, /FLOW OK: 11 states[\s\S]*20 cards, each bound/);
+  const r = repo(); assert.match(r.cl('check').out, /FLOW OK: 11 states[\s\S]*8 working states, each refusing its first work command until its prevent; 20 cards, each bound/);
+  const flow = path.join(r.d, '.cloop', 'flow.json'), shipped = fs.readFileSync(flow, 'utf8');
+  fs.writeFileSync(flow, shipped.replace('"before": ["approve"]', '"before": ["winner", "approve"]').replace('"block": ["ADOPT", "DEFINE", "LOOP", "DUEL", "GATE", "ASK"]', '"block": ["ADOPT", "DEFINE", "LOOP", "DUEL", "ASK"]'));
+  const bad = r.cl('check').out; assert.match(bad, /prevent GATE: block is not a command of GATE/); assert.match(bad, /prevent ASK: winner is not a command of ASK/);
+  fs.writeFileSync(flow, shipped);
   const ask = r.ok('card', 'ask');
   assert.match(ask, /decides, twice/); assert.match(ask, /1\. Their comment/); assert.match(ask, /3\. Their decision on the plan/); assert.match(ask, /never dictate a phrase/); assert.match(ask, /may stop the task/);
 });
@@ -240,7 +280,8 @@ test('M: the flow validator accepts the shipped flow and cards; the re-define as
 // ── the audit of this suite ──────────────────────────────────────────────────────────────
 test('M: audit: every guard in flow.json is seen refusing, each assertion exactly once, at the transition it gates', () => {
   const flow = JSON.parse(fs.readFileSync(path.join(SRC, 'flow.json'), 'utf8'));
-  const guards = new Set([...flow.always, ...Object.values(flow.states).flatMap((st) => [...(st.exit || []), ...Object.values(st.to || {}).flat()])]);
+  const guards = new Set([...flow.always, ...Object.values(flow.states).flatMap((st) => [...(st.exit || []), ...Object.values(st.to || {}).flat()]), ...(flow.prevent ? ['prevented'] : [])]);
   for (const gd of guards) assert.ok(Object.keys(asserted).some((t) => t.split(':')[0] === gd), `${gd}: never seen refusing`);
-  for (const [t, k] of Object.entries(asserted)) { assert.ok(guards.has(t.split(':')[0]), `${t}: not a guard in flow.json`); assert.equal(k, 1, `${t}: asserted ${k} times`); }
+  for (const st of Object.keys(flow.prevent)) assert.equal(asserted['prevent:' + st], 1, `prevent ${st}: its first work command seen refused ${asserted['prevent:' + st] || 0} times`);
+  for (const [t, k] of Object.entries(asserted)) { const [gd, st] = t.split(':'); assert.ok(gd === 'prevent' ? flow.prevent[st] : guards.has(gd), `${t}: not a guard or prevent row in flow.json`); assert.equal(k, 1, `${t}: asserted ${k} times`); }
 });

@@ -1,10 +1,10 @@
 {
-  "version": "1.2.2",
+  "version": "1.2.3",
   "start": { "new": "DEFINE", "existing": "ADOPT" },
   "escape": "ASK",
   "states": {
-    "ADOPT": { "next": ["DEFINE", "EXPLORE", "ONESHOT", "LOOP"], "exit": ["baselineRun", "prevented", "adoptRecord", "adoptRubric"], "to": { "EXPLORE": ["exploreAllowed"] } },
-    "DEFINE": { "next": ["EXPLORE", "ONESHOT", "LOOP", "DUEL"], "exit": ["prevented", "rubricValid", "rubricFrozen", "redefineBuilds"], "to": { "EXPLORE": ["exploreAllowed"], "DUEL": ["somethingToFix"] } },
+    "ADOPT": { "next": ["DEFINE", "EXPLORE", "ONESHOT", "LOOP"], "exit": ["baselineRun", "adoptRecord", "adoptRubric"], "to": { "EXPLORE": ["exploreAllowed"] } },
+    "DEFINE": { "next": ["EXPLORE", "ONESHOT", "LOOP", "DUEL"], "exit": ["rubricValid", "rubricFrozen", "redefineBuilds"], "to": { "EXPLORE": ["exploreAllowed"], "DUEL": ["somethingToFix"] } },
     "EXPLORE": { "next": ["LOOP", "ONESHOT", "DUEL", "ASK"], "exit": ["rubricUnchanged", "exploreSettled"] },
     "ONESHOT": { "next": ["LOOP", "ONESHOT", "DUEL", "ASK"], "exit": ["rubricUnchanged", "realRun", "judged"] },
     "LOOP": { "next": ["LOOP", "GATE", "DUEL", "ASK"], "exit": ["rubricUnchanged", "seenFailing", "judged"], "to": { "GATE": ["nextShotPassed"] } },
@@ -19,9 +19,10 @@
   "commands": {
     "adopt": ["ADOPT"],
     "freeze": ["ADOPT", "DEFINE"],
-    "stepback small": ["ADOPT", "DEFINE", "EXPLORE", "ONESHOT", "LOOP"],
+    "stepback small": ["ADOPT", "DEFINE", "EXPLORE", "ONESHOT", "LOOP", "GATE"],
+    "stepback full": ["DUEL"],
     "stepback replan": ["ASK"],
-    "block": ["ADOPT", "DEFINE", "LOOP"],
+    "block": ["ADOPT", "DEFINE", "LOOP", "DUEL", "GATE", "ASK"],
     "call member": ["DEFINE"],
     "call explorer": ["EXPLORE"],
     "call judge": ["EXPLORE", "ONESHOT", "LOOP", "DUEL", "GATE"],
@@ -44,6 +45,16 @@
     "approve": ["ASK"],
     "report --final": ["ACCEPT"],
     "clean": ["DONE", "STOPPED"]
+  },
+  "prevent": {
+    "ADOPT": { "stepback": "small", "block": true, "before": ["run", "freeze"] },
+    "DEFINE": { "stepback": "small", "block": true, "before": ["freeze"], "draft": ["call member"] },
+    "EXPLORE": { "stepback": "small", "block": false, "before": ["call explorer", "run", "call judge", "judge explore"] },
+    "ONESHOT": { "stepback": "small", "block": false, "before": ["call dynamic", "call mechanical", "run", "call judge", "judge oneshot"] },
+    "LOOP": { "stepback": "small", "block": true, "before": ["call dynamic", "call mechanical", "run", "run --before", "call judge", "judge loop"] },
+    "DUEL": { "stepback": "full", "block": true, "per": "dueler", "before": ["run", "call judge", "judge merge"] },
+    "GATE": { "stepback": "small", "block": true, "before": ["run", "run --e2e", "run --suite", "call judge", "judge gate"] },
+    "ASK": { "stepback": "replan", "block": true, "before": ["approve"], "carries": true }
   },
   "rungs": {
     "small": { "state": "LOOP", "says": "your small step back and one-block, then the next attempt: a next-shot, or a new one-shot after an unsound one" },
@@ -87,8 +98,11 @@
     { "card": "dueler", "state": "DUEL", "role": "dueler" },
     { "card": "judge", "state": "DUEL", "role": "judge" },
     { "card": "gate", "state": "GATE", "role": "root" },
+    { "card": "step-back", "state": "GATE", "role": "root" },
+    { "card": "one-block", "state": "GATE", "role": "root" },
     { "card": "judge", "state": "GATE", "role": "judge" },
     { "card": "ask", "state": "ASK", "rung": "redefine", "role": "root" },
+    { "card": "one-block", "state": "ASK", "role": "root" },
     { "card": "merge", "state": "ASK", "role": "root" },
     { "card": "dueler", "state": "ASK", "role": "dueler" },
     { "card": "accept", "state": "ACCEPT", "role": "root" },

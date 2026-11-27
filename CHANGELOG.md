@@ -2,6 +2,18 @@
 
 Other tools may detect and cleanly remove a cLoop install by its footprint: the managed block markers in the policy file, the fields of `.cloop/state.json` (including `codexPermission`, whether cLoop added the `Bash(codex exec:*)` permission), the hook tags, the engine folder's file set, and the header of the legacy root `cloop.mjs`. Each release lists what it changes in that footprint.
 
+## 1.2.3
+
+The prevent (step back, then one-block) is enforced by the engine in every working state, from one `prevent` rule in `flow.json`; the duel's loop-breakers each have their own prevent recorded against their call; the re-define's new definition is a one-block before the user's yes; tasks saved by 1.2.2 continue.
+
+Footprint:
+- Managed block markers: unchanged (`<!-- cloop:managed:start -->`, `<!-- cloop:managed:end -->`).
+- `.cloop/state.json` fields: unchanged (`packageVersion` becomes `1.2.3`).
+- Hook tags: unchanged (`cloop:`, `cloop-turn.mjs`).
+- Legacy root `cloop.mjs` header: unchanged (`// cLoop tool: the flow, the escalation ladder`); update still removes it.
+- Engine folder file set (`.cloop/`): unchanged (`cloop.mjs`, `flow.json`, `cards/` with the same 20 `.md` files; their text changes).
+- The `Bash(codex exec:*)` permission record: unchanged.
+
 ## 1.2.2
 
 One climb (one-shot → next-shot → release gate), a prevent (step back + one-block) before every step, the council on every criterion at every step, a re-define that asks the user twice, a git store that keeps the checkout's HEAD and cannot push, and migration of tasks started on 1.2.0.

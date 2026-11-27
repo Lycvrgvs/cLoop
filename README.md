@@ -6,6 +6,14 @@ You state the goal. A council of two independent models helps turn it into a rub
 
 This `codex` branch runs everything in **Codex**: the root is a Codex session and every member, explorer and builder is a native Codex subagent.
 
+## What is new in 1.2.3: the prevent, enforced in every working state
+
+1.2.2 asked for a prevent (a step back, then the one-block) before every step, but the engine checked it only in the one-shot, the next-shot and part of explore. 1.2.3 enforces it everywhere, from one rule in `flow.json` (`prevent`).
+
+- **Where.** Adoption (before the baseline run), define (before the freeze; the members may draft once the step back is recorded), explore, the one-shot, every next-shot, the duel, the re-define and the release gate. The state's first work command (a run, a call, a judgment, a freeze, an approval) is refused until the prevent is recorded, and the state's exit checks it again. Each refusal names the command that records the missing part.
+- **What is owed.** A one-shot and explore owe only the step back (the one-shot is its own block). The duel's loop-breakers each owe their own full step back and one-block, which the root records from each reply (`stepback full --call <id>`, `block --call <id>`) before running or judging that result: a record of what the loop-breaker wrote, not a witness that it did the work. The re-define's new definition is the re-plan's one-block, recorded before your yes; once you approve, it is also the prevent of the state it leads to.
+- **Tasks saved by 1.2.2 continue.** A task loaded mid-state owes the prevent from its next state entry.
+
 ## What is new in 1.2.2: one climb, and a prevent before every step
 
 1.2.0 moved every instruction into cards and the flow into data. 1.2.2 changes the flow itself, so the model builds the way it builds best: one coherent block at a time.
@@ -92,7 +100,8 @@ ADOPT    an existing project is adopted first: keep, simplify or replace, with y
 DEFINE   goals with you → spec, architecture and rubric as one block, drafted by both members → CORE / NON-CORE → freeze
          (provisional until the first council, then frozen hard; changes need your words)
 EXPLORE  2–4 parallel single-file one-shots, judged blind; the engine computes the eligible; the root chooses
-PREVENT  every loop, shot and phase: a step back on the whole, then the next action as one block
+PREVENT  every loop, shot and phase: a step back on the whole, then the next action as one block;
+         the engine refuses each working state's first work command until it is recorded
 CLIMB    one-shot (one file) → council → next-shot (repair + refactor) → release gate (end to end)
 ACCEPT   the release gate passed: you accept, or your feedback goes back to DEFINE or EXPLORE
 
@@ -122,7 +131,7 @@ Both members come from the same lab on this branch, so every review names the ne
 | `codex` | Codex | native Codex subagents |
 | `claude` | Claude Code | native Claude Code subagents |
 
-Every branch carries the same method, engine, flow and cards at 1.2.2. Only the roles subsection of the profile, the installer target and the builders' invocation differ.
+Every branch carries the same method, engine, flow and cards at 1.2.3. Only the roles subsection of the profile, the installer target and the builders' invocation differ.
 
 ## For AI coding agents (Claude Code, Codex, Cursor, OpenCode)
 
