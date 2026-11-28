@@ -1,3 +1,12 @@
+> **This branch is frozen at 1.2.3.** Every cLoop edition now lives on `main`. This branch was the `claude` edition; install it from `main` with `--edition claude`:
+>
+> ```bash
+> git clone https://github.com/Lycvrgvs/cLoop
+> node cLoop/install.mjs install --project . --edition claude --profile town
+> ```
+>
+> A project installed from this branch updates from `main` and keeps its edition (`node cLoop/install.mjs update --project .`). The rest of this page describes 1.2.3.
+
 # cLoop — Claude Code edition
 
 **cLoop** is a council loop for coding agents. The *c* stands for **council**: cLoop is short for *council-Loop*, and everywhere else it is simply cLoop.
