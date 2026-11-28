@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// cLoop release tool. Regenerates this branch's profiles and profiles/catalog.json from the cLoop
-// source txt, and optionally sets the package version.
+// cLoop release tool. Regenerates every edition's profiles and catalog (editions/<edition>/profiles/) from the
+// cLoop source txt, and optionally sets the version of both installers and the engine.
 //
-//   node tools/release.mjs --txt <path to cloop-town.txt> [--version X.Y.Z] [--edition main|codex|claude]
+//   node tools/release.mjs --txt <path to cloop-town.txt> [--version X.Y.Z]
 //
-// Output: town.md and high.md (no builders), plus town.cheap.md, town.cheap-100.md, high.cheap.md and
-// high.cheap-100.md, which add a Builders block from vendor/cheapgpt-builders.json (written by
+// Output, per edition: town.md and high.md (no builders), plus town.cheap.md, town.cheap-100.md, high.cheap.md and
+// high.cheap-100.md, which add a Builders block from editions/<edition>/vendor/cheapgpt-builders.json (written by
 // tools/sync-builders.mjs). From 1.1.0 the txt is the mono-agent Town Council prompt, written for the codex
 // edition (Codex root, native Codex subagents) and run with the engine .cloop/cloop.mjs (its flow.json and cards). Every edition is
 // derived from it here: only the intro's harness, the council sentence and the ROLES AND INVOCATION
@@ -17,12 +17,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const EDITIONS = ["main", "codex", "claude"];
+export const EDITIONS = ["exp", "claude", "codex"];
 const PROFILE_IDS = ["town", "high"];
 export const BUILDER_IDS = ["cheap", "cheap-100"];
 
 export const MODELS = {
-  main: {
+  exp: {
     town: { root: "Opus 5.5 medium", a: ["Opus 5.5", "medium"], b: ["gpt-6.1-terra", "max"], e: ["gpt-6.1-terra", "medium"] },
     high: { root: "Opus 5.5 high", a: ["Opus 5.5", "xhigh"], b: ["gpt-6.1-sol", "max"], e: ["gpt-6.1-sol", "medium"] },
   },
@@ -37,7 +37,7 @@ export const MODELS = {
 };
 
 const META = {
-  main: {
+  exp: {
     harness: "claude-codex",
     town: { title: "Town Council", account: "Claude Max + ChatGPT Plus", difficulty: "everyday to hard tasks on small accounts" },
     high: { title: "High Council", account: "Claude Max + ChatGPT Pro", difficulty: "hardest tasks" },
@@ -53,9 +53,6 @@ const META = {
     high: { title: "High Council", account: "Claude Max (higher tier)", difficulty: "hardest tasks" },
   },
 };
-
-// cLoop edition -> the cheapGPT edition its builders come from.
-export const CHEAPGPT_EDITION = { main: "exp", codex: "main", claude: "claude-edition" };
 
 const CLAUDE_ALIAS = { "Opus 5.5": "opus", "Sonnet 5.5": "sonnet", "Haiku 5.5": "haiku", "Fable 5.1": "fable" };
 const label = ([name, effort]) => `${name} ${effort}`;
@@ -105,13 +102,13 @@ function rolesClaude(m) {
 
 const CODEX_EXEC = "`codex exec -m <model> -c model_reasoning_effort=<effort> -s workspace-write -C \"<its worktree>\" --json -o \"$REPO/cloop/runs/<call-id>/out.md\" \"Read <packet path> and follow it.\" < /dev/null > \"$REPO/cloop/runs/<call-id>/events.jsonl\"`";
 
-function rolesMain(m) {
+function rolesExp(m) {
   return `${ROLES_HEAD}${table(m)}- The two members are different models from different labs: their findings complement each other.
 - ${CALL} Member A: Claude Code's native \`Agent\` tool, never as a fork (a fork runs on your model), with \`model\` ${claudeAliases([m.a])} and \`effort\` ${m.a[1]}, prompted "Read <packet path> and follow it."; save its final reply verbatim as \`cloop/runs/<call-id>/out.md\`. Member B and explorers: ${CODEX_EXEC}, with the model and effort from the table, run as background jobs and waited for in this turn; their model and effort are confirmed from \`events.jsonl\`. Before the first \`codex exec\`, confirm Codex is logged in and that no Codex instruction file it loads from the worktree up to the filesystem root holds an orchestration policy.
 `;
 }
 
-const RENDER = { main: rolesMain, codex: rolesCodex, claude: rolesClaude };
+const RENDER = { exp: rolesExp, codex: rolesCodex, claude: rolesClaude };
 
 export function renderRoles(edition, profileId) {
   return RENDER[edition](MODELS[edition][profileId]);
@@ -120,7 +117,7 @@ export function renderRoles(edition, profileId) {
 // The Builders block appended to ROLES AND INVOCATION when --builders is cheap or cheap-100.
 const BUILDER_RUN = {
   codex: () => "- Spawn each builder once per task with native `spawn_agent`, its own model and reasoning effort, inheriting the conversation; give later assignments as same-thread deltas, each with the worktree from `node .cloop/cloop.mjs call dynamic|mechanical`.",
-  main: () => `- Each builder is one \`codex exec\` session for the whole task. First assignment: ${CODEX_EXEC} with its own model and effort, carrying the conversation packet; keep the \`thread_id\` from its \`thread.started\` event. Later assignments: \`codex exec resume <thread_id> --json -o "$REPO/cloop/runs/<call-id>/out.md" "Read <packet path> and follow it." < /dev/null > "$REPO/cloop/runs/<call-id>/events.jsonl"\`, with a delta packet naming the worktree from \`node .cloop/cloop.mjs call dynamic|mechanical\`. Run both builders as background jobs and wait for both in this turn.`,
+  exp: () => `- Each builder is one \`codex exec\` session for the whole task. First assignment: ${CODEX_EXEC} with its own model and effort, carrying the conversation packet; keep the \`thread_id\` from its \`thread.started\` event. Later assignments: \`codex exec resume <thread_id> --json -o "$REPO/cloop/runs/<call-id>/out.md" "Read <packet path> and follow it." < /dev/null > "$REPO/cloop/runs/<call-id>/events.jsonl"\`, with a delta packet naming the worktree from \`node .cloop/cloop.mjs call dynamic|mechanical\`. Run both builders as background jobs and wait for both in this turn.`,
   claude: (rows) => `- Spawn each builder once per task with the native \`Agent\` tool, never as a fork, with its \`model\` (${claudeAliases(rows)}) and \`effort\`, seeded with the conversation packet; continue it only through \`SendMessage\` with deltas, each naming the worktree from \`node .cloop/cloop.mjs call dynamic|mechanical\`.`,
 };
 
@@ -200,7 +197,7 @@ export function buildProfile(parsed, edition, profileId, builderId = "none", ven
   let out = body.slice(0, span.start) + roles + "\n" + body.slice(span.end);
   out = out.replace("PROFILE: town\n", `PROFILE: ${profileId}\n`);
   if (edition !== "codex") out = out.replace(INTRO_TOWN, INTRO_TOWN.replace("a Codex session", "a Claude Code session"));
-  if (edition === "main") out = out.replace(LABS_SAME, LABS_MAIN);
+  if (edition === "exp") out = out.replace(LABS_SAME, LABS_MAIN);
   return out + "\n";
 }
 
@@ -250,15 +247,15 @@ export function buildCatalog(parsed, edition, version, vendor) {
 }
 
 export function loadVendor(repo = REPO, edition) {
-  const file = path.join(repo, "vendor", "cheapgpt-builders.json");
-  if (!existsSync(file)) fail("missing vendor/cheapgpt-builders.json; run node tools/sync-builders.mjs first");
+  const rel = `editions/${edition}/vendor/cheapgpt-builders.json`, file = path.join(repo, rel);
+  if (!existsSync(file)) fail(`missing ${rel}; run node tools/sync-builders.mjs --edition ${edition} first`);
   const vendor = JSON.parse(readFileSync(file, "utf8"));
-  if (vendor.edition !== edition) fail(`vendor/cheapgpt-builders.json is for edition ${vendor.edition}, not ${edition}`);
-  if (vendor.source?.edition !== CHEAPGPT_EDITION[edition]) fail(`vendor builders come from cheapGPT ${vendor.source?.edition}; edition ${edition} pairs with ${CHEAPGPT_EDITION[edition]}`);
+  if (vendor.edition !== edition) fail(`${rel} is for edition ${vendor.edition}, not ${edition}`);
+  if (vendor.source?.edition !== edition) fail(`${rel}: builders come from cheapGPT ${vendor.source?.edition}; each cLoop edition takes them from the cheapGPT edition of the same name (${edition})`);
   for (const b of BUILDER_IDS) {
     for (const kind of ["dynamic", "mechanical"]) {
       const row = vendor.profiles?.[b]?.[kind];
-      if (!row || !row.model || !row.effort) fail(`vendor/cheapgpt-builders.json lacks the ${b} ${kind} builder`);
+      if (!row || !row.model || !row.effort) fail(`${rel} lacks the ${b} ${kind} builder`);
       if (edition === "claude" && !CLAUDE_ALIAS[row.model]) fail(`no Claude Code alias for builder model ${row.model}`);
     }
   }
@@ -269,7 +266,7 @@ function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
-    if (token === "--txt" || token === "--version" || token === "--edition") {
+    if (token === "--txt" || token === "--version") {
       const value = argv[i + 1];
       if (!value || value.startsWith("--")) fail(`${token} needs a value`);
       args[token.slice(2)] = value;
@@ -279,37 +276,43 @@ function parseArgs(argv) {
   return args;
 }
 
+// Every file that carries the version, with the one line that holds it.
+const VERSIONED = [
+  ["editions/claude/install.mjs", /^export const PACKAGE_VERSION = "(\d+\.\d+\.\d+)";$/m, (v) => `export const PACKAGE_VERSION = "${v}";`],
+  ["editions/codex/install.mjs", /^export const PACKAGE_VERSION = "(\d+\.\d+\.\d+)";$/m, (v) => `export const PACKAGE_VERSION = "${v}";`],
+  ["cloop.mjs", /^const VERSION = '(\d+\.\d+\.\d+)';$/m, (v) => `const VERSION = '${v}';`],
+];
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!args.txt) fail("usage: node tools/release.mjs --txt <cloop-town.txt> [--version X.Y.Z] [--edition main|codex|claude]");
-  const catalogPath = path.join(REPO, "profiles", "catalog.json");
-  const installPath = path.join(REPO, "install.mjs");
-  if (!existsSync(installPath)) fail(`missing ${installPath}; run from a cLoop checkout`);
-  let edition = args.edition;
-  if (!edition && existsSync(catalogPath)) edition = JSON.parse(readFileSync(catalogPath, "utf8")).edition;
-  if (!EDITIONS.includes(edition)) fail(`edition must be one of ${EDITIONS.join(", ")} (got ${edition}); pass --edition`);
-  const vendor = loadVendor(REPO, edition);
-  let install = readFileSync(installPath, "utf8");
-  const versionRe = /^export const PACKAGE_VERSION = "(\d+\.\d+\.\d+)";$/m;
-  const found = install.match(versionRe);
-  if (!found || countOf(install, "export const PACKAGE_VERSION = ") !== 1) fail("install.mjs must contain exactly one PACKAGE_VERSION line");
-  let version = found[1];
-  if (args.version) {
-    if (!/^\d+\.\d+\.\d+$/.test(args.version)) fail("--version must look like 1.2.3");
-    version = args.version;
-    install = install.replace(versionRe, `export const PACKAGE_VERSION = "${version}";`);
-    writeFileSync(installPath, install);
+  if (!args.txt) fail("usage: node tools/release.mjs --txt <cloop-town.txt> [--version X.Y.Z]");
+  if (args.version && !/^\d+\.\d+\.\d+$/.test(args.version)) fail("--version must look like 1.2.3");
+  const versions = new Set();
+  for (const [rel, re, line] of VERSIONED) {
+    const file = path.join(REPO, rel);
+    if (!existsSync(file)) fail(`missing ${rel}; run from a cLoop checkout`);
+    let text = readFileSync(file, "utf8");
+    const hits = text.match(new RegExp(re.source, "gm")) || [];
+    if (hits.length !== 1) fail(`${rel} must hold exactly one version line`);
+    if (args.version) { text = text.replace(re, line(args.version)); writeFileSync(file, text); }
+    versions.add(args.version || text.match(re)[1]);
   }
+  if (versions.size !== 1) fail(`the installers and the engine carry different versions (${[...versions].join(", ")}); pass --version`);
+  const [version] = versions;
   const parsed = parseTxt(readFileSync(path.resolve(args.txt), "utf8"));
-  const profilesDir = path.join(REPO, "profiles");
-  for (const name of readdirSync(profilesDir)) if (name.endsWith(".md")) rmSync(path.join(profilesDir, name));
-  for (const id of PROFILE_IDS) {
-    for (const b of ["none", ...BUILDER_IDS]) {
-      writeFileSync(path.join(profilesDir, profileFile(id, b)), buildProfile(parsed, edition, id, b, vendor));
+  for (const edition of EDITIONS) {
+    const vendor = loadVendor(REPO, edition);
+    const profilesDir = path.join(REPO, "editions", edition, "profiles");
+    if (!existsSync(profilesDir)) fail(`missing editions/${edition}/profiles`);
+    for (const name of readdirSync(profilesDir)) if (name.endsWith(".md")) rmSync(path.join(profilesDir, name));
+    for (const id of PROFILE_IDS) {
+      for (const b of ["none", ...BUILDER_IDS]) {
+        writeFileSync(path.join(profilesDir, profileFile(id, b)), buildProfile(parsed, edition, id, b, vendor));
+      }
     }
+    writeFileSync(path.join(profilesDir, "catalog.json"), JSON.stringify(buildCatalog(parsed, edition, version, vendor), null, 2) + "\n");
   }
-  writeFileSync(catalogPath, JSON.stringify(buildCatalog(parsed, edition, version, vendor), null, 2) + "\n");
-  process.stdout.write(`release.mjs: OK edition=${edition} version=${version} profiles=${PROFILE_IDS.length * 3}\n`);
+  process.stdout.write(`release.mjs: OK version=${version} editions=${EDITIONS.join(",")} profiles=${EDITIONS.length * PROFILE_IDS.length * 3}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

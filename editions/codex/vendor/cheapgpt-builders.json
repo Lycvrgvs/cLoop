@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "edition": "main",
+  "edition": "codex",
   "source": {
     "package": "cheapGPT",
-    "version": "1.10.3",
-    "edition": "exp",
-    "commit": "5b4be7ba13bc3fc64e661316ed694d110c69b024"
+    "version": "1.10.4",
+    "edition": "codex",
+    "commit": "22efe47a9d05eb6c1a99892257bc04d4b43899c3"
   },
   "profiles": {
     "cheap": {

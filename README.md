@@ -1,10 +1,17 @@
-# cLoop — Claude Code + Codex CLI
+# cLoop
 
 **cLoop** is a council loop for coding agents. The *c* stands for **council**: cLoop is short for *council-Loop*, and everywhere else it is simply cLoop.
 
 You state the goal. A council of two independent models helps turn it into a rubric of single-property criteria, tagged CORE or NON-CORE. The root builds the whole product as one self-contained one-shot and runs it on real input; then one next-shot repairs what failed and moves it into the architecture's layout. The council judges every step against the whole rubric on a committed candidate. When a failure resists the root, the same two models become loop-breakers; when they cannot close it either, you decide a re-plan. Nothing counts as done until the release gate passes: the product end to end on a real run, the full suite, and a full review.
 
-This `main` branch runs the root in **Claude Code**. Member A is a native Claude Code subagent; Member B, the explorers and the builders are **Codex CLI** sessions (`codex exec`) that the root launches directly. Two labs on one council, so their findings complement each other.
+cLoop comes in three editions, one per harness, all on this `main` branch: `exp` (Claude Code root; Member B, the explorers and the builders through the Codex CLI, so two labs sit on one council), `claude` (everything in Claude Code) and `codex` (everything in Codex). `install --edition <name>` picks one (see [Editions](#editions)).
+
+## What is new in 1.2.4: every edition on one branch
+
+- **One branch, one install command.** The three editions, until 1.2.3 the branches `main`, `claude` and `codex`, now all live on `main`. `install --edition exp|claude|codex` picks one; without `--edition`, a new project gets `exp` (what `main` always installed) and a project that has cLoop keeps its edition on `update`, `doctor` and `uninstall`. `update --edition <another>` is refused with the two commands that switch (uninstall, then install `--edition`). The old `claude` and `codex` branches are frozen at 1.2.3.
+- **The same install as before.** Each edition writes exactly what its old branch wrote; the only changes are the engine's version and, in the builder profiles, the cheapGPT version and edition name on the builders line (below). A release script checks every edition, profile, builders value and hook mode against the old branches.
+- **Builders from cheapGPT 1.10.4**, whose editions now carry the same names: each cLoop edition takes its builders from the cheapGPT edition of the same name. The rows themselves are unchanged.
+- **The engine reports 1.2.4.** Tasks saved by 1.2.3 keep owing every prevent; only tasks from before 1.2.3 get the one-state grace.
 
 ## What is new in 1.2.3: the prevent, enforced in every working state
 
@@ -13,19 +20,6 @@ This `main` branch runs the root in **Claude Code**. Member A is a native Claude
 - **Where.** Adoption (before the baseline run), define (before the freeze; the members may draft once the step back is recorded), explore, the one-shot, every next-shot, the duel, the re-define and the release gate. The state's first work command (a run, a call, a judgment, a freeze, an approval) is refused until the prevent is recorded, and the state's exit checks it again. Each refusal names the command that records the missing part.
 - **What is owed.** A one-shot and explore owe only the step back (the one-shot is its own block). The duel's loop-breakers each owe their own full step back and one-block, which the root records from each reply (`stepback full --call <id>`, `block --call <id>`) before running or judging that result: a record of what the loop-breaker wrote, not a witness that it did the work. The re-define's new definition is the re-plan's one-block, recorded before your yes; once you approve, it is also the prevent of the state it leads to.
 - **Tasks saved by 1.2.2 continue.** A task loaded mid-state owes the prevent from its next state entry.
-
-## What is new in 1.2.2: one climb, and a prevent before every step
-
-1.2.0 moved every instruction into cards and the flow into data. 1.2.2 changes the flow itself, so the model builds the way it builds best: one coherent block at a time.
-
-- **One climb instead of two stages.** The core stage, the core gate and the separate non-core stage are gone: the build is one features stage that ends at one end-to-end gate. CORE and NON-CORE stay as rubric classes.
-- **One-shot, then one next-shot.** The one-shot builds the whole product as one self-contained file, with every core and non-core criterion, and the council judges it: it passes when every core criterion works. Then the next-shot, ONE small loop, repairs every failing criterion and moves the one-shot into the architecture's layout in the same block, never a chain of repair loops followed by a refactor. The release gate refuses until a next-shot has passed.
-- **A prevent before every step.** Every loop, shot and phase starts with a step back on the whole, then a one-block: the next action written whole on the board (`block`, shown under `## Next action`) before anything is built. A one-shot is its own block; DEFINE drafts spec, architecture and rubric together as one block.
-- **The council judges everything.** The one-shot, every next-shot and the release gate are judged on every criterion.
-- **Focused and full climb the same way.** Only FULL may explore.
-- **The re-define asks you twice, in plain words:** first your comment, then your yes to the plan it produced, with what differs from your comment marked. A no with a new comment starts the re-plan again.
-- **Safer when `.git` is read-only.** The task's own store keeps your checkout's branch, cannot push anywhere, and is probed before use; at acceptance you are told where the work is.
-- **Tasks started on 1.2.0 continue.** Their state migrates on load.
 
 ## How it works
 
@@ -112,87 +106,99 @@ LADDER   small: your prevent + the next attempt    (3rd ADVANCED, 2nd STALLED or
 
 Outcomes are PASS, ADVANCED, STALLED, REGRESSION or BLOCKED, computed by the engine. After every judging the root sends you `node .cloop/cloop.mjs report` and keeps working.
 
-## Profiles
-
-| Profile | Council | Root (recommended) | Member A | Member B | Explorer | Account |
-| --- | --- | --- | --- | --- | --- | --- |
-| `town` | Town Council | Opus 5.5 medium | Opus 5.5 medium | `gpt-6.1-terra` max | `gpt-6.1-terra` medium | Claude Max + ChatGPT Plus |
-| `high` | High Council | Opus 5.5 high | Opus 5.5 xhigh | `gpt-6.1-sol` max | `gpt-6.1-sol` medium | Claude Max + ChatGPT Pro |
-
-Install **exactly one** profile per project. Member A and Member B judge every loop and every gate, and become the loop-breakers when a failure resists the root.
-
 ## Editions
 
-| Branch | Root | Members and explorers |
-| --- | --- | --- |
-| `main` | Claude Code | Member A native subagent; Member B and explorers through Codex CLI |
-| `codex` | Codex | native Codex subagents |
-| `claude` | Claude Code | native Claude Code subagents |
+| Edition | Root | Members and explorers | Builders (`--builders`) | Instruction file |
+| --- | --- | --- | --- | --- |
+| `exp` (default) | Claude Code | Member A a native subagent; Member B and the explorers through the Codex CLI (`codex exec`) | `codex exec` sessions | `CLAUDE.md` |
+| `claude` | Claude Code | native Claude Code subagents (`Agent` tool, explicit `model` and `effort`); no Codex needed | native subagents | `CLAUDE.md` |
+| `codex` | Codex | native Codex subagents | native Codex threads | `AGENTS.md` |
 
-Every branch carries the same method, engine, flow and cards at 1.2.3. Only the roles subsection of the profile, the installer target and the builders' invocation differ.
+The method, engine, flow and cards are the same in every edition; only the profile's roles subsection, the installer target and the builders' invocation differ. Until 1.2.3 each edition had its own branch (`main` was `exp`); the `claude` and `codex` branches are frozen at 1.2.3. A project installed from any of them updates from `main` and keeps its edition.
+
+## Profiles
+
+Two profiles per edition. Install **exactly one** per project. Member A and Member B judge every loop and every gate, and become the loop-breakers when a failure resists the root.
+
+| Edition | Profile | Root (recommended) | Member A | Member B | Explorer | Account |
+| --- | --- | --- | --- | --- | --- | --- |
+| `exp` | `town` | Opus 5.5 medium | Opus 5.5 medium | `gpt-6.1-terra` max | `gpt-6.1-terra` medium | Claude Max + ChatGPT Plus |
+| `exp` | `high` | Opus 5.5 high | Opus 5.5 xhigh | `gpt-6.1-sol` max | `gpt-6.1-sol` medium | Claude Max + ChatGPT Pro |
+| `claude` | `town` | Opus 5.5 medium | Sonnet 5.5 xhigh | Opus 5.5 medium | Sonnet 5.5 medium | Claude Max |
+| `claude` | `high` | Opus 5.5 high | Opus 5.5 xhigh | Fable 5.1 xhigh | Opus 5.5 medium | Claude Max (higher tier) |
+| `codex` | `town` | `gpt-6.1-sol` medium | `gpt-6.1-terra` max | `gpt-6.1-sol` medium | `gpt-6.1-terra` medium | ChatGPT Plus |
+| `codex` | `high` | `gpt-6.1-sol` high | `gpt-6.1-sol` max | `gpt-6-astra` xhigh | `gpt-6.1-sol` medium | ChatGPT Pro |
+
+In `claude` and `codex` both members come from the same lab, so every review names the nearest counterfeit (what could look like the property without being it) with extra care.
 
 ## For AI coding agents (Claude Code, Codex, Cursor, OpenCode)
 
 If a human asked you to install cLoop into the **current** project:
 
 1. cLoop is project-local. Never install into a home config and never treat it as a global skill.
-2. Ask which profile to use if they did not name one (`town` or `high`); recommend from the table above.
-3. Clone this repository and check out the branch that matches their harness (`main`, `codex` or `claude`). Profiles live next to `install.mjs`.
+2. Ask which edition (the harness they use: `exp`, `claude` or `codex`) and which profile (`town` or `high`), if they did not say; recommend from the tables above. A project that already has cLoop keeps its edition; do not pass `--edition` on `update`.
+3. Clone this repository (`main`; every edition is on it). The installer reads `editions/` next to `install.mjs`.
 4. Run the installer with Node 18+ from the target project:
 
 ```bash
-node /path/to/cLoop/install.mjs install --project . --profile town
+node /path/to/cLoop/install.mjs install --project . --edition exp --profile town
 ```
 
-5. Do not paste profile text into `CLAUDE.md` yourself, and do not install more than one profile.
-6. After install or update, tell the human to open the project in Claude Code, accept the workspace trust dialog, review `/hooks`, and set the root model with `/model` (`town`: Opus 5.5 medium; `high`: Opus 5.5 high).
+5. Do not paste profile text into `CLAUDE.md` or `AGENTS.md` yourself, and do not install more than one profile.
+6. After install or update, tell the human what the harness needs:
+   - `exp` and `claude`: open the project in Claude Code, accept the workspace trust dialog, review `/hooks`, and set the root model with `/model` (`town`: Opus 5.5 medium; `high`: Opus 5.5 high).
+   - `codex`: trust the project in Codex, review `/hooks`, and switch the root model (`town`: `gpt-6.1-sol` medium; `high`: `gpt-6.1-sol` high).
 
 ## Install / update / doctor / uninstall
 
 In an existing project, the first FOCUSED or FULL task starts with ADOPTION: `node .cloop/cloop.mjs init` detects the project and enters ADOPT, so the rubric, the spec and the architecture exist before feature work. `doctor` checks that the installed engine, flow and cards match this checkout.
 
 ```bash
-node /path/to/cLoop/install.mjs install --project . --profile town
+node /path/to/cLoop/install.mjs install --project . --edition exp|claude|codex --profile town
 node /path/to/cLoop/install.mjs update --project . [--profile high]
 node /path/to/cLoop/install.mjs doctor --project .
 node /path/to/cLoop/install.mjs uninstall --project .
 ```
 
-Flags: `--dry-run`, `--force` (overwrite a hand-edited cLoop block), `--json`, `--no-hooks`, `--hooks` (default), `--builders none|cheap|cheap-100`. `--global` is rejected. Profile aliases: `town-council`, `high-council`.
+`--edition` defaults to the project's installed edition, else `exp`. To change a project's edition, `uninstall`, then `install --edition <name>`; `update` refuses a different edition. Flags: `--dry-run`, `--force` (overwrite a hand-edited cLoop block), `--json`, `--no-hooks`, `--hooks` (default), `--builders none|cheap|cheap-100`, and on `codex` `--agents-md-limit 96k|default`. `--global` is rejected. Profile aliases: `town-council`, `high-council`.
 
 **Requirements:**
-- Node 18+ and Claude Code.
-- `codex` on `PATH` and logged in (Member B, the explorers and the builders run through it).
-- The installer adds `Bash(codex exec:*)` to `.claude/settings.json` permissions; uninstall removes it.
-- `AGENTS.md` must not hold a cLoop block, because Codex sessions would load it as their own policy. `doctor` reports it if it does.
+- Node 18+, and Claude Code (`exp`, `claude`) or Codex (`codex`).
+- `exp`: `codex` on `PATH` and logged in (Member B, the explorers and the builders run through it). The installer adds `Bash(codex exec:*)` to `.claude/settings.json` permissions (unless you already had it); uninstall removes what it added. `AGENTS.md` must not hold a cLoop block, because Codex sessions would load it as their own policy; `doctor` reports it if it does.
+- `codex`: the installer enables native multi-agent in `.codex/config.toml` (`[features.multi_agent_v2]`, with model overrides and a 30-minute wait). The cLoop policy is about 12 KB, under Codex's 32 KiB `AGENTS.md` default; `install` still sets `project_doc_max_bytes = 98304` in its own marked block, so the policy fits next to a long `AGENTS.md` of yours. Pass `--agents-md-limit default` to opt out; a key you already own is never overwritten, and `doctor` warns if the file is too large for the limit.
 
 ## What it writes
 
 ```text
-CLAUDE.md                        # bounded cLoop block appended or replaced
+CLAUDE.md (exp, claude) / AGENTS.md (codex)   # bounded cLoop block appended or replaced
 .cloop/cloop.mjs                 # the engine the policy runs (node .cloop/cloop.mjs status)
 .cloop/flow.json                 # the flow it interprets
 .cloop/cards/                    # the cards it binds to states and roles
 .cloop/state.json                # profile, hashes, hook mode
-.claude/settings.json            # cLoop hook entries and the codex exec permission; other keys kept
+exp, claude:
+.claude/settings.json            # cLoop hook entries (and on exp the codex exec permission); other keys kept
 .claude/hooks/cloop-turn.mjs     # heartbeat (UserPromptSubmit) + short compact reminder (SessionStart: compact)
+codex:
+.codex/config.toml               # multi-agent block and the AGENTS.md limit block; other keys kept
+.codex/hooks.json                # cLoop hook entries merged; other hooks kept
+.codex/hooks/cloop-turn.mjs      # heartbeat (UserPromptSubmit) + compact recovery (SessionStart: compact)
 ```
 
-Claude Code re-reads the project-root `CLAUDE.md` after compaction, so the compact hook injects only the turn reminder, never the whole block. Everything outside the `<!-- cloop:managed:start -->` / `<!-- cloop:managed:end -->` markers stays yours; `uninstall` removes only cLoop files.
+Claude Code re-reads the project-root `CLAUDE.md` after compaction, so its compact hook injects only the turn reminder; on Codex the recovery hook re-injects the whole managed block, so the root never works from a summary of its own policy. Everything outside the `<!-- cloop:managed:start -->` / `<!-- cloop:managed:end -->` markers stays yours; `uninstall` removes only cLoop files.
 
 While a task runs, the engine keeps `cloop/state.json`, `cloop/log.jsonl` (every run, call, judging, step back and transition) and the rendered `cloop/board.md`; calls live in `cloop/runs/` and `cloop/wt/`, scratch in `temporary/`. All are git-excluded; `node .cloop/cloop.mjs clean` removes the call folders, worktrees and scratch after DONE and keeps the state, log and board. Three files are permanent and committed: `cloop/rubric.md`, `cloop/spec.md` and `cloop/architecture.md`. Where the sandbox keeps `.git` read-only, `init` keeps the repository in `cloop/git`, with its history; run git through `node .cloop/cloop.mjs git <args>`.
 
 ## cheapGPT builders (`--builders`)
 
-cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed in the same project. To get cheapGPT's economical builders, install cLoop with `--builders cheap` or `--builders cheap-100`. The builders then take only the build steps (each one-shot file and each small loop's build): each is one `codex exec` session for the whole task (first call, then `codex exec resume <thread_id>` with a delta), seeded with a conversation packet, and takes every assignment in its own worktree of BEST (`node .cloop/cloop.mjs call dynamic|mechanical`, whose packet carries the builder's card); the root allocates by whether the handoff can state the exact result, merges, and runs the real path before the council. The root keeps everything else, and the council never changes. Pick the builders separately from `town` or `high`.
+cLoop and [cheapGPT](https://github.com/Lycvrgvs/cheapGPT) are never installed in the same project. To get cheapGPT's economical builders, install cLoop with `--builders cheap` or `--builders cheap-100`. The builders then take only the build steps (each one-shot file and each small loop's build): each is one session for the whole task (`exp`: one `codex exec` session, continued with `codex exec resume <thread_id>` and a delta; `claude`: one native subagent continued through `SendMessage`; `codex`: one native Codex thread), seeded with a conversation packet, and takes every assignment in its own worktree of BEST (`node .cloop/cloop.mjs call dynamic|mechanical`, whose packet carries the builder's card); the root allocates by whether the handoff can state the exact result, merges, and runs the real path before the council. The root keeps everything else, and the council never changes. Pick the builders separately from `town` or `high`.
 
-| Option | Dynamic builder | Mechanical builder |
-| --- | --- | --- |
-| `--builders none` (default) | the root builds | the root builds |
-| `--builders cheap` | gpt-6.1-terra medium | gpt-6-luna max |
-| `--builders cheap-100` | gpt-6.1-terra max | gpt-6-luna max |
+| Option | Dynamic builder (`exp`, `codex`) | Mechanical builder (`exp`, `codex`) | Dynamic builder (`claude`) | Mechanical builder (`claude`) |
+| --- | --- | --- | --- | --- |
+| `--builders none` (default) | the root builds | the root builds | the root builds | the root builds |
+| `--builders cheap` | gpt-6.1-terra medium | gpt-6-luna max | Sonnet 5.5 medium | Haiku 5.5 xhigh |
+| `--builders cheap-100` | gpt-6.1-terra max | gpt-6-luna max | Sonnet 5.5 xhigh | Haiku 5.5 xhigh |
 
-The rows come from cheapGPT 1.10.2's published `profiles/roles.json` (the `exp` edition), copied into `vendor/cheapgpt-builders.json` at release time. Nothing is fetched at install.
+Each cLoop edition takes its rows from the cheapGPT edition of the same name (`exp` ↔ `exp`, `claude` ↔ `claude`, `codex` ↔ `codex`): cheapGPT 1.10.4's published `editions/<edition>/profiles/roles.json`, copied into `editions/<edition>/vendor/cheapgpt-builders.json` at release time. Nothing is fetched at install.
 
 ```bash
 node /path/to/cLoop/install.mjs install --project . --profile town --builders cheap
@@ -210,35 +216,38 @@ node tools/flow-diagram.mjs --check   # the README diagram matches flow.json
 
 ## Releasing
 
-Profiles are generated, never edited by hand. To release a new prompt, on each branch run:
+Profiles are generated, never edited by hand. To release a new prompt, on `main` run:
 
 ```bash
-node tools/sync-builders.mjs --roles /path/to/cheapGPT/profiles/roles.json --commit <cheapGPT sha>
+node tools/sync-builders.mjs --cheapgpt /path/to/cheapGPT   # a checkout at a pinned commit
 node tools/release.mjs --txt /path/to/cloop-town.txt --version X.Y.Z
 node tools/flow-diagram.mjs
 node --test test/*.mjs
 ```
 
-`sync-builders` copies the builder rows from cheapGPT's published roles table, checked out at a pinned commit of the paired edition. `release` then derives the six profiles for this branch's edition (`town`, `high`, each with builders `none`, `cheap` and `cheap-100`) from the Town Council source prompt, the mono-agent `cloop-town.txt`. It refuses to run if the prompt's roles subsection or intro no longer match its template. Keep the released `cloop.mjs`, `flow.json` and `cards/` next to `install.mjs`; the installer ships them to `.cloop/`.
+`sync-builders` copies every edition's builder rows from cheapGPT's published roles tables (the edition of the same name) and records the checkout's commit. `release` then derives every edition's six profiles (`town`, `high`, each with builders `none`, `cheap` and `cheap-100`) and its catalog from the Town Council source prompt, the mono-agent `cloop-town.txt`, and sets the version of both installers and the engine. It refuses to run if the prompt's roles subsection or intro no longer match its template. The installers ship the root's `cloop.mjs`, `flow.json` and `cards/` to `.cloop/`.
 
 ## Layout
 
 ```text
-install.mjs              zero-dependency installer
+install.mjs              zero-dependency installer: picks the edition, then runs its installer
 cloop.mjs                the engine: runs flow.json, binds the cards, enforces the guards
 flow.json                states, transitions, guards, commands, ladder and card bindings
 cards/*.md               the instructions for each state and each sub-agent
-profiles/town.md         Town Council policy (generated)
-profiles/high.md         High Council policy (generated)
-profiles/*.cheap*.md     the same policies with a Builders block (generated)
-profiles/catalog.json    profile metadata and turn reminders (generated)
-hooks/cloop-turn.mjs     copied into each target project's .claude/hooks/
-tools/release.mjs        profile generator for releases
-tools/sync-builders.mjs  copies cheapGPT's builder rows into vendor/
+editions/<edition>/profiles/        town.md, high.md, *.cheap*.md (with a Builders block) and catalog.json (generated)
+editions/<edition>/vendor/          cheapgpt-builders.json: the vendored builder rows and their cheapGPT source
+editions/claude/install.mjs         the Claude Code installer, for exp and claude
+editions/claude/hooks/cloop-turn.mjs  copied into each target project's .claude/hooks/
+editions/codex/install.mjs          the Codex installer
+editions/codex/codex-config.mjs     .codex/config.toml merge (multi-agent and AGENTS.md limit)
+editions/codex/hooks/cloop-turn.mjs   copied into each target project's .codex/hooks/
+tools/release.mjs        profile generator for releases (every edition)
+tools/sync-builders.mjs  copies cheapGPT's builder rows into editions/<edition>/vendor/
 tools/flow-diagram.mjs   writes the README diagram from flow.json
-vendor/cheapgpt-builders.json  vendored builder rows and their cheapGPT source
 cheapgpt-guard.mjs       stops install and update when cheapGPT is installed
-test/installer.test.mjs  the installer
+test/editions.test.mjs   edition choice, detection, refusals; the cheapGPT edition names
+test/installer-claude.test.mjs  the Claude Code installer, for exp and claude
+test/installer-codex.test.mjs   the Codex installer
 test/repo.test.mjs       flow.json, the cards and the README diagram
 test/cloop.test.mjs      the engine: every guard refusing once, then passing; the git store; migration
 ```

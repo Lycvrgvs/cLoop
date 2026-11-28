@@ -16,6 +16,7 @@ const RUBRIC = (extra = '') => `# rubric\n## Goals\n- G1 | "a counter that adds"
 const C4 = '\n- C4 | CORE | add sums three numbers | evidence: node app.js 1 2 3 | pass: 6 | fail: 3 | boundary: 0 0 0';
 const asserted = {}; // guard[:branch], or prevent:<STATE> → how many times its refusal was asserted (the audit test reads it)
 const FAIL = 'node -e "process.exit(1)"', PASS = 'node -e 1';
+const V = spawnSync(process.execPath, [path.join(SRC, 'cloop.mjs'), 'version'], { encoding: 'utf8' }).stdout.trim(), VRE = V.replaceAll('.', '\\.');
 
 function repo({ existing = false } = {}) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-'));
@@ -202,8 +203,8 @@ test('M: a task started on 1.2.0 (core and non-core stages) migrates on load and
   old.entry = Object.fromEntries(ENTRY.map((k) => [k, s.entry[k]]));
   fs.writeFileSync(f, JSON.stringify(Object.fromEntries(KEYS.map((k) => [k, old[k]])), null, 2));
   assert.match(r.ok('status'), /STATE LOOP · FOCUSED/);
-  const m = r.state(); assert.equal(m.version, '1.2.3'); assert.ok(!('stage' in m) && !('prevent' in m)); assert.ok(m.entry.prevent, 'the recorded step back carries over');
-  assert.match(fs.readFileSync(path.join(r.d, 'cloop', 'log.jsonl'), 'utf8'), /"ev":"migrate","from":"1\.2\.0","to":"1\.2\.3"/);
+  const m = r.state(); assert.equal(m.version, V); assert.ok(!('stage' in m) && !('prevent' in m)); assert.ok(m.entry.prevent, 'the recorded step back carries over');
+  assert.match(fs.readFileSync(path.join(r.d, 'cloop', 'log.jsonl'), 'utf8'), new RegExp(`"ev":"migrate","from":"1\\.2\\.0","to":"${VRE}"`));
   r.ok('block', 'the whole product after the repair'); r.ok('run', '--before', '--', FAIL); r.commit(); r.ok('run', '--', PASS);
   assert.equal(r.council('loop', ALL, []).history.at(-1).outcome, 'PASS'); r.ok('advance', 'GATE');
 });
@@ -213,12 +214,19 @@ test('M: a task saved by 1.2.2 mid-duel or mid-gate continues without a prevent;
   const r = repo(); r.defined(); r.ok('advance', 'ONESHOT'); r.oneshot(['C1'], ['C2', 'C3']);
   r.ok('advance', 'LOOP'); r.nextshot(['C1'], ['C2', 'C3']); r.ok('advance', 'LOOP'); assert.equal(r.nextshot(['C1'], ['C2', 'C3']).rung, 'full');
   r.ok('advance', 'DUEL'); const a = r.ok('call', 'dueler'), b = r.ok('call', 'dueler'); as122(r); // 1.2.2 recorded no loop-breaker's prevent
-  r.ok('run', '--cwd', r.wt(a), '--', PASS); assert.equal(r.state().entry.legacy, true); assert.equal(r.state().version, '1.2.3');
-  assert.match(fs.readFileSync(path.join(r.d, 'cloop', 'log.jsonl'), 'utf8'), /"ev":"migrate","from":"1\.2\.2","to":"1\.2\.3"/);
+  r.ok('run', '--cwd', r.wt(a), '--', PASS); assert.equal(r.state().entry.legacy, true); assert.equal(r.state().version, V);
+  assert.match(fs.readFileSync(path.join(r.d, 'cloop', 'log.jsonl'), 'utf8'), new RegExp(`"ev":"migrate","from":"1\\.2\\.2","to":"${VRE}"`));
   r.ok('run', '--cwd', r.wt(b), '--', PASS); r.commit(); r.ok('run', '--', PASS); assert.equal(r.council('merge', ALL, []).history.at(-1).outcome, 'PASS');
   r.ok('advance', 'GATE'); r.no(/PREVENT first: run --e2e in GATE/, 'run', '--e2e', '--', PASS); // the next entry owes its prevent
   r.prevent(); r.ok('run', '--e2e', '--', PASS); r.ok('run', '--suite', '--', PASS); as122(r); // 1.2.2 had no prevent in GATE
   assert.equal(r.council('gate', ALL, []).history.at(-1).outcome, 'PASS'); r.ok('advance', 'ACCEPT');
+});
+
+test('M: a task saved by 1.2.3 or later already owed every prevent; it keeps owing it after an update', () => {
+  const r = repo(); r.defined(); r.ok('advance', 'ONESHOT');
+  const f = path.join(r.d, 'cloop', 'state.json'), s = r.state(); s.version = '1.2.3'; fs.writeFileSync(f, JSON.stringify(s, null, 2));
+  r.no(/PREVENT first: run in ONESHOT waits for the step back/, 'run', '--', PASS);
+  assert.equal(r.state().version, V); assert.equal(r.state().entry.legacy, undefined);
 });
 
 // ── the task's own git store, when .git refuses the method's writes ──────────────────────

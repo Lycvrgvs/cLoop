@@ -19,18 +19,20 @@ import {
   mergeCloopHooks,
   run,
   sha256,
-} from "../install.mjs";
+} from "../editions/codex/install.mjs";
+import { mergeMultiAgentConfig } from "../editions/codex/codex-config.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INSTALL = path.join(ROOT, "install.mjs");
-const HOOK = path.join(ROOT, "hooks", "cloop-turn.mjs");
+const HOOK = path.join(ROOT, "editions", "codex", "hooks", "cloop-turn.mjs");
+const SRC = path.join(ROOT, "editions", "codex"); // the codex edition: its installer, hook and profiles
 
 async function tempDir() {
   return mkdtemp(path.join(os.tmpdir(), "cloop-"));
 }
 
 async function cli(project, args, env = {}) {
-  return run(["node", INSTALL, ...args, "--project", project], { sourceRoot: ROOT });
+  return run(["node", INSTALL, ...args, "--project", project], { sourceRoot: SRC });
 }
 
 function countMarkers(text) {
@@ -45,11 +47,11 @@ test("empty repository install creates AGENTS.md, one block, state, and doctor p
   try {
     const result = await cli(dir, ["install", "--profile", "town"]);
     assert.equal(result.ok, true);
-    const agents = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    const agents = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     const markers = countMarkers(agents);
     assert.equal(markers.start, 1);
     assert.equal(markers.end, 1);
-    const profile = await loadProfile("town", ROOT);
+    const profile = await loadProfile("town", SRC);
     const inner = extractProfileFromBlock(agents, "town");
     assert.equal(inner, profile.body.trim());
     assert.match(agents, /You are the cLoop root/);
@@ -59,14 +61,17 @@ test("empty repository install creates AGENTS.md, one block, state, and doctor p
     assert.doesNotMatch(agents, /gpt-5\.6-sol xhigh/);
     const state = JSON.parse(await readFile(path.join(dir, ".cloop", "state.json"), "utf8"));
     assert.equal(state.profile, "town");
-    assert.equal(state.hookMode, "claude");
+    assert.equal(state.hookMode, "codex");
     const region = extractManagedRegion(agents);
     assert.equal(state.managedBlockSha256, sha256(region.block));
-    assert.equal(existsSync(path.join(dir, ".claude", "hooks", "cloop-turn.mjs")), true);
+    assert.equal(existsSync(path.join(dir, ".codex", "hooks", "cloop-turn.mjs")), true);
     assert.equal(await readFile(path.join(dir, ".cloop", "cloop.mjs"), "utf8"), await readFile(path.join(ROOT, "cloop.mjs"), "utf8"));
     assert.equal(await readFile(path.join(dir, ".cloop", "flow.json"), "utf8"), await readFile(path.join(ROOT, "flow.json"), "utf8"));
     assert.equal(await readFile(path.join(dir, ".cloop", "cards", "next-shot.md"), "utf8"), await readFile(path.join(ROOT, "cards", "next-shot.md"), "utf8"));
     assert.equal(existsSync(path.join(dir, "cloop.mjs")), false);
+    const toml = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
+    assert.match(toml, /\[features\.multi_agent_v2\]/);
+    assert.match(toml, /default_wait_timeout_ms = 1800000/);
     const doctor = await cli(dir, ["doctor"]);
     assert.equal(doctor.ok, true);
   } finally {
@@ -78,9 +83,9 @@ test("existing AGENTS.md user instructions survive installation", async () => {
   const dir = await tempDir();
   try {
     const original = "# Repository Rules\n\nRun npm test before completion.\n";
-    await writeFile(path.join(dir, "CLAUDE.md"), original);
+    await writeFile(path.join(dir, "AGENTS.md"), original);
     await cli(dir, ["install", "--profile", "town"]);
-    const agents = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    const agents = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     assert.match(agents, /Run npm test before completion\./);
     assert.match(agents, /You are the cLoop root/);
     assert.ok(agents.startsWith("# Repository Rules"));
@@ -96,9 +101,9 @@ test("install is idempotent and never duplicates the managed block", async () =>
   const dir = await tempDir();
   try {
     await cli(dir, ["install", "--profile", "town"]);
-    const first = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    const first = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     await cli(dir, ["install", "--profile", "town"]);
-    const second = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    const second = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     const markers = countMarkers(second);
     assert.equal(markers.start, 1);
     assert.equal(markers.end, 1);
@@ -109,15 +114,15 @@ test("install is idempotent and never duplicates the managed block", async () =>
 });
 
 test("each profile installs only that profile's unique root text", async () => {
-  const UNIQUE = {"town":"gpt-6.1-terra max","high":"gpt-6.1-sol max"};
+  const UNIQUE = {"town":"gpt-6.1-terra max","high":"gpt-6-astra xhigh"};
   for (const [profile, other] of [["town", "high"], ["high", "town"]]) {
     const dir = await tempDir();
     try {
       await cli(dir, ["install", "--profile", profile, "--no-hooks"]);
-      const agents = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+      const agents = await readFile(path.join(dir, "AGENTS.md"), "utf8");
       assert.ok(agents.includes(UNIQUE[profile]), `${profile} lacks ${UNIQUE[profile]}`);
       assert.equal(agents.includes(UNIQUE[other]), false, `${profile} unexpectedly contains ${UNIQUE[other]}`);
-      const loaded = await loadProfile(profile, ROOT);
+      const loaded = await loadProfile(profile, SRC);
       assert.equal(extractProfileFromBlock(agents, profile), loaded.body.trim());
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -126,13 +131,13 @@ test("each profile installs only that profile's unique root text", async () => {
 });
 
 test("update replaces only cLoop-owned content and can switch profiles", async () => {
-  const UNIQUE = {"town":"gpt-6.1-terra max","high":"gpt-6.1-sol max"};
+  const UNIQUE = {"town":"gpt-6.1-terra max","high":"gpt-6-astra xhigh"};
   const dir = await tempDir();
   try {
-    await writeFile(path.join(dir, "CLAUDE.md"), "Keep me.\n");
+    await writeFile(path.join(dir, "AGENTS.md"), "Keep me.\n");
     await cli(dir, ["install", "--profile", "town"]);
     await cli(dir, ["update", "--profile", "high"]);
-    const agents = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    const agents = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     assert.match(agents, /Keep me\./);
     assert.ok(agents.includes(UNIQUE.high));
     assert.equal(agents.includes(UNIQUE.town), false);
@@ -150,16 +155,16 @@ test("modified managed block fails doctor and update unless --force", async () =
   const dir = await tempDir();
   try {
     await cli(dir, ["install", "--profile", "town"]);
-    const agentsPath = path.join(dir, "CLAUDE.md");
+    const agentsPath = path.join(dir, "AGENTS.md");
     const agents = await readFile(agentsPath, "utf8");
-    await writeFile(agentsPath, agents.replace("## NOISE_VETO", "## TAMPERED_VETO"));
+    await writeFile(agentsPath, agents.replace("Every council call", "TAMPERED council call"));
     const doctor = await cli(dir, ["doctor"]);
     assert.equal(doctor.ok, false);
     await assert.rejects(() => cli(dir, ["update"]), /modified by hand/);
     const forced = await cli(dir, ["update", "--force"]);
     assert.equal(forced.ok, true);
     const restored = await readFile(agentsPath, "utf8");
-    assert.match(restored, /## NOISE_VETO/);
+    assert.match(restored, /Every council call/);
     assert.doesNotMatch(restored, /TAMPERED/);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -170,9 +175,9 @@ test("malformed markers fail without modifying the file", async () => {
   const dir = await tempDir();
   try {
     const broken = `# Rules\n\n${START_MARKER}\npartial\n`;
-    await writeFile(path.join(dir, "CLAUDE.md"), broken);
+    await writeFile(path.join(dir, "AGENTS.md"), broken);
     await assert.rejects(() => cli(dir, ["install", "--profile", "town"]), /malformed/);
-    const after = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    const after = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     assert.equal(after, broken);
     assert.equal(existsSync(path.join(dir, ".cloop", "state.json")), false);
   } finally {
@@ -183,9 +188,9 @@ test("malformed markers fail without modifying the file", async () => {
 test("duplicate managed blocks fail safely", async () => {
   const dir = await tempDir();
   try {
-    const profile = await loadProfile("town", ROOT);
+    const profile = await loadProfile("town", SRC);
     const block = buildManagedBlock("town", profile.body);
-    await writeFile(path.join(dir, "CLAUDE.md"), block + "\n" + block);
+    await writeFile(path.join(dir, "AGENTS.md"), block + "\n" + block);
     await assert.rejects(() => cli(dir, ["install", "--profile", "town"]), /malformed/);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -195,17 +200,17 @@ test("duplicate managed blocks fail safely", async () => {
 test("uninstall removes cLoop files and preserves user instructions", async () => {
   const dir = await tempDir();
   try {
-    await writeFile(path.join(dir, "CLAUDE.md"), "User rules stay.\n");
+    await writeFile(path.join(dir, "AGENTS.md"), "User rules stay.\n");
     await cli(dir, ["install", "--profile", "high"]);
     await cli(dir, ["uninstall"]);
-    const agents = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    const agents = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     assert.match(agents, /User rules stay\./);
     assert.equal(agents.includes(START_MARKER), false);
     assert.equal(existsSync(path.join(dir, ".cloop", "state.json")), false);
-    assert.equal(existsSync(path.join(dir, ".claude", "hooks", "cloop-turn.mjs")), false);
+    assert.equal(existsSync(path.join(dir, ".codex", "hooks", "cloop-turn.mjs")), false);
     assert.equal(existsSync(path.join(dir, ".cloop", "cloop.mjs")), false);
     assert.equal(existsSync(path.join(dir, ".cloop", "cards")), false);
-    const hooksRaw = await readFile(path.join(dir, ".claude", "settings.json"), "utf8").catch(() => "{}");
+    const hooksRaw = await readFile(path.join(dir, ".codex", "hooks.json"), "utf8").catch(() => "{}");
     const counts = cloopHookCount(hooksRaw);
     assert.equal(counts.heartbeat, 0);
     assert.equal(counts.recovery, 0);
@@ -217,12 +222,12 @@ test("uninstall removes cLoop files and preserves user instructions", async () =
 test("dry-run never mutates the filesystem", async () => {
   const dir = await tempDir();
   try {
-    await writeFile(path.join(dir, "CLAUDE.md"), "untouched\n");
+    await writeFile(path.join(dir, "AGENTS.md"), "untouched\n");
     const result = await cli(dir, ["install", "--profile", "town", "--dry-run"]);
     assert.equal(result.dryRun, true);
-    assert.equal(await readFile(path.join(dir, "CLAUDE.md"), "utf8"), "untouched\n");
+    assert.equal(await readFile(path.join(dir, "AGENTS.md"), "utf8"), "untouched\n");
     assert.equal(existsSync(path.join(dir, ".cloop")), false);
-    assert.equal(existsSync(path.join(dir, ".claude")), false);
+    assert.equal(existsSync(path.join(dir, ".codex")), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -231,7 +236,7 @@ test("dry-run never mutates the filesystem", async () => {
 test("failed transaction restores original project files", async () => {
   const dir = await tempDir();
   try {
-    await writeFile(path.join(dir, "CLAUDE.md"), "original\n");
+    await writeFile(path.join(dir, "AGENTS.md"), "original\n");
     const previous = process.env.CLOOP_FAIL_AFTER;
     process.env.CLOOP_FAIL_AFTER = "state";
     try {
@@ -240,7 +245,7 @@ test("failed transaction restores original project files", async () => {
       if (previous == null) delete process.env.CLOOP_FAIL_AFTER;
       else process.env.CLOOP_FAIL_AFTER = previous;
     }
-    assert.equal(await readFile(path.join(dir, "CLAUDE.md"), "utf8"), "original\n");
+    assert.equal(await readFile(path.join(dir, "AGENTS.md"), "utf8"), "original\n");
     assert.equal(existsSync(path.join(dir, ".cloop", "state.json")), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -250,7 +255,7 @@ test("failed transaction restores original project files", async () => {
 test("unrelated existing hooks survive and cLoop hooks are idempotent", async () => {
   const dir = await tempDir();
   try {
-    await mkdir(path.join(dir, ".claude"), { recursive: true });
+    await mkdir(path.join(dir, ".codex"), { recursive: true });
     const existing = {
       description: "team hooks",
       hooks: {
@@ -262,16 +267,16 @@ test("unrelated existing hooks survive and cLoop hooks are idempotent", async ()
         ],
       },
     };
-    await writeFile(path.join(dir, ".claude", "settings.json"), JSON.stringify(existing, null, 2));
+    await writeFile(path.join(dir, ".codex", "hooks.json"), JSON.stringify(existing, null, 2));
     await cli(dir, ["install", "--profile", "town"]);
     await cli(dir, ["install", "--profile", "town"]);
-    const hooks = JSON.parse(await readFile(path.join(dir, ".claude", "settings.json"), "utf8"));
+    const hooks = JSON.parse(await readFile(path.join(dir, ".codex", "hooks.json"), "utf8"));
     assert.equal(hooks.hooks.PreToolUse[0].hooks[0].statusMessage, "team-bash");
     const counts = cloopHookCount(JSON.stringify(hooks));
     assert.equal(counts.heartbeat, 1);
     assert.equal(counts.recovery, 1);
     await cli(dir, ["uninstall"]);
-    const after = JSON.parse(await readFile(path.join(dir, ".claude", "settings.json"), "utf8"));
+    const after = JSON.parse(await readFile(path.join(dir, ".codex", "hooks.json"), "utf8"));
     assert.equal(after.hooks.PreToolUse[0].hooks[0].command, "echo team");
     assert.equal(after.hooks.UserPromptSubmit, undefined);
     assert.equal(after.hooks.SessionStart, undefined);
@@ -293,7 +298,7 @@ test("--global is refused", async () => {
 });
 
 test("buildManagedBlock wrapper stays short and preserves profile bytes", async () => {
-  const profile = await loadProfile("high", ROOT);
+  const profile = await loadProfile("high", SRC);
   const block = buildManagedBlock("high", profile.body);
   assert.ok(block.startsWith(START_MARKER));
   assert.ok(block.includes(END_MARKER));
@@ -324,15 +329,15 @@ function runHook(cwd, payload) {
   });
 }
 
-test("heartbeat hook uses nested Claude Code contract and includes prompt_id", async () => {
+test("heartbeat hook uses nested Codex contract and includes turn_id", async () => {
   const dir = await tempDir();
   try {
     await cli(dir, ["install", "--profile", "town"]);
     const result = await runHook(dir, {
       hook_event_name: "UserPromptSubmit",
       cwd: dir,
-      model: "claude-opus-5-5",
-      prompt_id: "turn-abc-123",
+      model: "gpt-5-based-codex",
+      turn_id: "turn-abc-123",
     });
     assert.equal(result.code, 0);
     const payload = JSON.parse(result.stdout);
@@ -340,10 +345,10 @@ test("heartbeat hook uses nested Claude Code contract and includes prompt_id", a
     assert.equal(payload.hookSpecificOutput.hookEventName, "UserPromptSubmit");
     const ctx = payload.hookSpecificOutput.additionalContext;
     assert.equal(typeof ctx, "string");
-    assert.match(ctx, /cLoop heartbeat: the cLoop hook ran for prompt_id=turn-abc-123/);
-    assert.match(ctx, /Active profile=town/);
-    assert.match(ctx, /preferred root=Opus 5\.5 medium/);
-    assert.match(ctx, /CLOOP town\./);
+    assert.match(ctx, /CLOOP HEARTBEAT: hook executed for current turn_id=turn-abc-123/);
+    assert.match(ctx, /CLOOP ACTIVE: profile=town/);
+    assert.match(ctx, /Preferred profile root: gpt-6\.1-sol medium/);
+    assert.match(ctx, /CLOOP town\. /);
     assert.doesNotMatch(ctx, /PLANNING MODE:/);
     assert.doesNotMatch(ctx, /IMPLEMENTATION MODE:/);
     assert.ok(ctx.length < 6000);
@@ -357,11 +362,11 @@ test("heartbeat hook uses nested Claude Code contract and includes prompt_id", a
   }
 });
 
-test("compact recovery emits a short reminder and relies on CLAUDE.md reload", async () => {
+test("compact recovery uses nested SessionStart contract and rehydrates the managed block", async () => {
   const dir = await tempDir();
   try {
     await cli(dir, ["install", "--profile", "town"]);
-    const agents = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    const agents = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     const block = extractManagedRegion(agents).block;
     const result = await runHook(dir, {
       hook_event_name: "SessionStart",
@@ -373,9 +378,9 @@ test("compact recovery emits a short reminder and relies on CLAUDE.md reload", a
     assert.equal(payload.additionalContext, undefined);
     assert.equal(payload.hookSpecificOutput.hookEventName, "SessionStart");
     const ctx = payload.hookSpecificOutput.additionalContext;
-    assert.match(ctx, /cLoop recovery: SessionStart source=compact/);
-    assert.ok(!ctx.includes(block.trim()));
-    assert.ok(ctx.length <= 10000);
+    assert.match(ctx, /CLOOP RECOVERY: SessionStart source=compact succeeded/);
+    assert.ok(ctx.includes(block.trim()));
+    assert.match(ctx, /You are the cLoop root/);
     assert.match(ctx, /CLOOP town\./);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -406,18 +411,18 @@ test("mergeCloopHooks refuses malformed hooks.json", () => {
 
 test("profiles keep the cLoop structure and carry no harness setup text", async () => {
   for (const id of ["town", "high"]) {
-    const text = await readFile(path.join(ROOT, "profiles", `${id}.md`), "utf8");
+    const text = await readFile(path.join(SRC, "profiles", `${id}.md`), "utf8");
     assert.match(text, new RegExp(`^PROFILE: ${id}\nISSUE_REPO: Lycvrgvs/cLoop\n`));
     for (const need of [/the c stands for council/, /## FLOW/, /END_FLOW/, /## MECHANICS/, /### ROLES AND INVOCATION/, /### THE COUNCIL/, /### BUILDERS/, /### CARDS/, /### REPORTING AND FILES/, /END_MECHANICS/, /## LAWS/, /## NOISE_VETO/, /## SIGNALS/, /END_SIGNALS/, /node \.cloop\/cloop\.mjs status/]) assert.match(text, need);
     for (const bad of [/^# MAIN PROMPT/m, /^# TURN REMINDER/m, /^# TEST PLAN/m, /═══/]) assert.doesNotMatch(text, bad);
   }
   const { readdir } = await import("node:fs/promises");
-  assert.deepEqual((await readdir(path.join(ROOT, "profiles"))).sort(), ["catalog.json", "high.cheap-100.md", "high.cheap.md", "high.md", "town.cheap-100.md", "town.cheap.md", "town.md"]);
+  assert.deepEqual((await readdir(path.join(SRC, "profiles"))).sort(), ["catalog.json", "high.cheap-100.md", "high.cheap.md", "high.md", "town.cheap-100.md", "town.cheap.md", "town.md"]);
 });
 
 test("catalog carries one turn reminder per profile and no full modes", async () => {
-  const catalog = JSON.parse(await readFile(path.join(ROOT, "profiles", "catalog.json"), "utf8"));
-  assert.equal(catalog.edition, "main");
+  const catalog = JSON.parse(await readFile(path.join(SRC, "profiles", "catalog.json"), "utf8"));
+  assert.equal(catalog.edition, "codex");
   assert.deepEqual(Object.keys(catalog.profiles), ["town", "high"]);
   for (const id of ["town", "high"]) {
     const meta = catalog.profiles[id];
@@ -427,19 +432,21 @@ test("catalog carries one turn reminder per profile and no full modes", async ()
     assert.match(meta.council, / \+ /);
     for (const b of ["cheap", "cheap-100"]) {
       assert.equal(meta.builders[b].file, `${id}.${b}.md`);
-      assert.ok(existsSync(path.join(ROOT, "profiles", meta.builders[b].file)));
+      assert.ok(existsSync(path.join(SRC, "profiles", meta.builders[b].file)));
     }
   }
   assert.equal(catalog.buildersSource.package, "cheapGPT");
-  assert.equal(catalog.buildersSource.edition, "exp");
+  assert.equal(catalog.buildersSource.edition, "codex");
 });
 
-test("main profiles run Member A natively and Member B and explorers through codex exec", async () => {
+test("codex profiles route every role through native subagents and only high uses Astra", async () => {
   for (const id of ["town", "high"]) {
-    const text = await readFile(path.join(ROOT, "profiles", `${id}.md`), "utf8");
-    for (const need of [/a Claude Code session/, /from different labs/, /native `Agent` tool/, /\| Member B \(judge, loop-breaker\) \| gpt-6\.1-(terra|sol) max \|/, /codex exec -m <model> -c model_reasoning_effort=<effort> -s workspace-write -C/, /confirm Codex is logged in/]) assert.match(text, need);
-    for (const bad of [/spawn_agent/, /wait_agent/]) assert.doesNotMatch(text, bad);
+    const text = await readFile(path.join(SRC, "profiles", `${id}.md`), "utf8");
+    for (const need of [/a Codex session/, /native `spawn_agent`/, /wait_agent/, /fork_turns: "none"/, /same lab/]) assert.match(text, need);
+    for (const bad of [/codex exec/, /Claude Code/, /native `Agent` tool/, /different labs/, /CLAUDE\.md/]) assert.doesNotMatch(text, bad);
   }
+  assert.doesNotMatch(await readFile(path.join(SRC, "profiles", "town.md"), "utf8"), /astra/i);
+  assert.match(await readFile(path.join(SRC, "profiles", "high.md"), "utf8"), /gpt-6-astra xhigh/);
 });
 
 test("doctor warns when installed packageVersion or hook script is stale", async () => {
@@ -450,7 +457,7 @@ test("doctor warns when installed packageVersion or hook script is stale", async
     const state = JSON.parse(await readFile(statePath, "utf8"));
     state.packageVersion = "1.0.2";
     await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
-    await writeFile(path.join(dir, ".claude", "hooks", "cloop-turn.mjs"), "export default 'stale';\n");
+    await writeFile(path.join(dir, ".codex", "hooks", "cloop-turn.mjs"), "export default 'stale';\n");
     const doctor = await cli(dir, ["doctor"]);
     assert.equal(doctor.ok, true);
     assert.ok(doctor.warnings.some((w) => /packageVersion 1\.0\.2/.test(w)));
@@ -460,37 +467,180 @@ test("doctor warns when installed packageVersion or hook script is stale", async
   }
 });
 
-test("settings.json merge preserves unrelated keys and hooks", async () => {
+test("existing unrelated Codex config survives outside the cLoop TOML block", async () => {
   const dir = await tempDir();
   try {
-    await mkdir(path.join(dir, ".claude"), { recursive: true });
-    await writeFile(path.join(dir, ".claude", "settings.json"), JSON.stringify({ model: "opus", env: { A: "1" } }, null, 2));
+    await mkdir(path.join(dir, ".codex"), { recursive: true });
+    const original = "model = \"gpt-5\"\n\n[mcp_servers.demo]\ncommand = \"echo\"\n";
+    await writeFile(path.join(dir, ".codex", "config.toml"), original);
     await cli(dir, ["install", "--profile", "town"]);
-    const s = JSON.parse(await readFile(path.join(dir, ".claude", "settings.json"), "utf8"));
-    assert.equal(s.model, "opus");
-    assert.equal(s.env.A, "1");
-    assert.equal(s.hooks.SessionStart[0].matcher, "compact");
-    assert.match(s.hooks.UserPromptSubmit[0].hooks[0].command, /\$\{CLAUDE_PROJECT_DIR\}\/\.claude\/hooks\/cloop-turn\.mjs/);
-    await cli(dir, ["uninstall"]);
-    const after = JSON.parse(await readFile(path.join(dir, ".claude", "settings.json"), "utf8"));
-    assert.equal(after.model, "opus");
-    assert.equal(after.hooks?.UserPromptSubmit, undefined);
+    const toml = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
+    assert.match(toml, /model = "gpt-5"/);
+    assert.match(toml, /\[mcp_servers\.demo\]/);
+    assert.match(toml, /cloop:multi-agent-v2:start/);
+    assert.equal(toml.split("[features.multi_agent_v2]").length - 1, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test("main install adds the codex permission and uninstall removes it", async () => {
+test("existing matching multi-agent values stay user-owned and are not duplicated", async () => {
   const dir = await tempDir();
   try {
-    await cli(dir, ["install", "--profile", "town"]);
-    const s = JSON.parse(await readFile(path.join(dir, ".claude", "settings.json"), "utf8"));
-    assert.ok(s.permissions.allow.includes("Bash(codex exec:*)"));
-    await cli(dir, ["uninstall"]);
-    const raw = await readFile(path.join(dir, ".claude", "settings.json"), "utf8").catch(() => "{}");
-    assert.ok(!raw.includes("codex exec"));
+    await mkdir(path.join(dir, ".codex"), { recursive: true });
+    await writeFile(
+      path.join(dir, ".codex", "config.toml"),
+      `[features.multi_agent_v2]
+enabled = true
+wait_agent_enabled = true
+expose_spawn_agent_model_overrides = true
+min_wait_timeout_ms = 60000
+default_wait_timeout_ms = 1800000
+max_wait_timeout_ms = 3600000
+`
+    );
+    await cli(dir, ["install", "--profile", "town", "--no-hooks"]);
+    const toml = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
+    assert.equal((toml.match(/^\s*enabled = true\s*$/gm) || []).length, 1);
+    assert.doesNotMatch(toml, /cloop:multi-agent-v2:start/);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("existing table receives only missing keys without a duplicate table", async () => {
+  const dir = await tempDir();
+  try {
+    await mkdir(path.join(dir, ".codex"), { recursive: true });
+    await writeFile(
+      path.join(dir, ".codex", "config.toml"),
+      `[features.multi_agent_v2]
+enabled = true
+`
+    );
+    await cli(dir, ["install", "--profile", "high"]);
+    const toml = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
+    assert.equal(toml.split("[features.multi_agent_v2]").length - 1, 1);
+    assert.match(toml, /wait_agent_enabled = true/);
+    assert.match(toml, /cloop:multi-agent-v2:start/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("conflicting multi-agent values fail without rewriting config", async () => {
+  const dir = await tempDir();
+  try {
+    await mkdir(path.join(dir, ".codex"), { recursive: true });
+    const original = "[features.multi_agent_v2]\nenabled = false\n";
+    await writeFile(path.join(dir, ".codex", "config.toml"), original);
+    await assert.rejects(() => cli(dir, ["install", "--profile", "town"]), /config conflict/);
+    assert.equal(await readFile(path.join(dir, ".codex", "config.toml"), "utf8"), original);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("uninstall removes only cLoop TOML and dry-run does not touch config", async () => {
+  const dir = await tempDir();
+  try {
+    await mkdir(path.join(dir, ".codex"), { recursive: true });
+    await writeFile(path.join(dir, ".codex", "config.toml"), "keep = true\n");
+    const dry = await cli(dir, ["install", "--profile", "town", "--dry-run"]);
+    assert.equal(await readFile(path.join(dir, ".codex", "config.toml"), "utf8"), "keep = true\n");
+    assert.ok(dry.writes.includes(".codex/config.toml"));
+    await cli(dir, ["install", "--profile", "town"]);
+    await cli(dir, ["uninstall"]);
+    const toml = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
+    assert.match(toml, /keep = true/);
+    assert.doesNotMatch(toml, /cloop:multi-agent-v2/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("transaction failure restores original Codex config", async () => {
+  const dir = await tempDir();
+  try {
+    await mkdir(path.join(dir, ".codex"), { recursive: true });
+    await writeFile(path.join(dir, ".codex", "config.toml"), "keep = 1\n");
+    const previous = process.env.CLOOP_FAIL_AFTER;
+    process.env.CLOOP_FAIL_AFTER = "state";
+    try {
+      await assert.rejects(() => cli(dir, ["install", "--profile", "town"]), /induced failure/);
+    } finally {
+      if (previous == null) delete process.env.CLOOP_FAIL_AFTER;
+      else process.env.CLOOP_FAIL_AFTER = previous;
+    }
+    assert.equal(await readFile(path.join(dir, ".codex", "config.toml"), "utf8"), "keep = 1\n");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("mergeMultiAgentConfig refuses dotted keys", () => {
+  assert.throws(
+    () => mergeMultiAgentConfig("features.multi_agent_v2.enabled = true\n"),
+    /dotted-key/
+  );
+});
+
+test("--agents-md-limit 96k writes project_doc_max_bytes, update keeps it, default and uninstall remove it", async () => {
+  const dir = await tempDir();
+  const config = path.join(dir, ".codex", "config.toml");
+  try {
+    await cli(dir, ["install", "--profile", "town", "--agents-md-limit", "96k"]);
+    let text = await readFile(config, "utf8");
+    assert.match(text, /^# cloop:agents-md-limit:start\nproject_doc_max_bytes = 98304\n# cloop:agents-md-limit:end\n/);
+    assert.equal((await cli(dir, ["doctor"])).ok, true);
+    await cli(dir, ["update"]);
+    text = await readFile(config, "utf8");
+    assert.equal(text.split("project_doc_max_bytes").length - 1, 1);
+    await cli(dir, ["update", "--agents-md-limit", "default"]);
+    text = await readFile(config, "utf8");
+    assert.doesNotMatch(text, /project_doc_max_bytes/);
+    await cli(dir, ["update", "--agents-md-limit", "96k"]);
+    await cli(dir, ["uninstall"]);
+    assert.equal(existsSync(config), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("--agents-md-limit refuses a user-owned project_doc_max_bytes and bad values", async () => {
+  const dir = await tempDir();
+  try {
+    await mkdir(path.join(dir, ".codex"), { recursive: true });
+    await writeFile(path.join(dir, ".codex", "config.toml"), "project_doc_max_bytes = 65536\n");
+    await assert.rejects(cli(dir, ["install", "--profile", "town", "--agents-md-limit", "96k"]), /already set/);
+    await assert.rejects(cli(dir, ["install", "--profile", "town", "--agents-md-limit", "64k"]), /96k or default/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("install sets the 96 KiB AGENTS.md limit by default, respects a user-owned key, and doctor warns at the default", async () => {
+  const dir = await tempDir();
+  const owned = await tempDir();
+  try {
+    await writeFile(path.join(dir, "AGENTS.md"), `# Team rules\n\n${"x".repeat(40000)}\n`);
+    await cli(dir, ["install", "--profile", "town"]);
+    const text = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
+    assert.match(text, /^# cloop:agents-md-limit:start\nproject_doc_max_bytes = 98304\n# cloop:agents-md-limit:end\n/);
+    let doctor = await cli(dir, ["doctor"]);
+    assert.ok(!doctor.warnings.some((w) => /project_doc_max_bytes/.test(w)));
+    await cli(dir, ["update", "--agents-md-limit", "default"]);
+    doctor = await cli(dir, ["doctor"]);
+    assert.ok(doctor.warnings.some((w) => /over Codex's project_doc_max_bytes \(32768\)/.test(w)));
+    await mkdir(path.join(owned, ".codex"), { recursive: true });
+    await writeFile(path.join(owned, ".codex", "config.toml"), "project_doc_max_bytes = 131072\n");
+    await cli(owned, ["install", "--profile", "town"]);
+    const ownedText = await readFile(path.join(owned, ".codex", "config.toml"), "utf8");
+    assert.equal(ownedText.split("project_doc_max_bytes").length - 1, 1);
+    assert.match(ownedText, /^project_doc_max_bytes = 131072$/m);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(owned, { recursive: true, force: true });
   }
 });
 
@@ -499,7 +649,7 @@ test("--builders installs the builder variant, update keeps it, and none removes
   const dir = await tempDir();
   try {
     await cli(dir, ["install", "--profile", "town", "--builders", "cheap"]);
-    let text = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    let text = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     assert.match(text, /\*\*Builders\*\* \(`--builders cheap`/);
     assert.match(text, /Active profile: `town` · builders: `cheap`/);
     let state = JSON.parse(await readFile(path.join(dir, ".cloop", "state.json"), "utf8"));
@@ -510,10 +660,10 @@ test("--builders installs the builder variant, update keeps it, and none removes
     state = JSON.parse(await readFile(path.join(dir, ".cloop", "state.json"), "utf8"));
     assert.equal(state.builders, "cheap");
     await cli(dir, ["update", "--builders", "cheap-100"]);
-    text = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    text = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     assert.match(text, /\*\*Builders\*\* \(`--builders cheap-100`/);
     await cli(dir, ["update", "--builders", "none"]);
-    text = await readFile(path.join(dir, "CLAUDE.md"), "utf8");
+    text = await readFile(path.join(dir, "AGENTS.md"), "utf8");
     assert.doesNotMatch(text, /\*\*Builders\*\* \(/);
     assert.equal((await cli(dir, ["doctor"])).ok, true);
     await assert.rejects(() => cli(dir, ["update", "--builders", "ultracheap"]), /--builders takes none, cheap or cheap-100/);
@@ -523,14 +673,14 @@ test("--builders installs the builder variant, update keeps it, and none removes
 });
 
 test("builder profiles are the plain profiles plus one Builders block from the vendored rows", async () => {
-  const vendor = JSON.parse(await readFile(path.join(ROOT, "vendor", "cheapgpt-builders.json"), "utf8"));
-  assert.equal(vendor.source.edition, "exp");
+  const vendor = JSON.parse(await readFile(path.join(SRC, "vendor", "cheapgpt-builders.json"), "utf8"));
+  assert.equal(vendor.source.edition, "codex");
   assert.match(vendor.source.commit, /^[0-9a-f]{40}$/);
   for (const id of ["town", "high"]) {
-    const plain = await readFile(path.join(ROOT, "profiles", `${id}.md`), "utf8");
+    const plain = await readFile(path.join(SRC, "profiles", `${id}.md`), "utf8");
     assert.doesNotMatch(plain, /\*\*Builders\*\* \(/);
     for (const b of ["cheap", "cheap-100"]) {
-      const text = await readFile(path.join(ROOT, "profiles", `${id}.${b}.md`), "utf8");
+      const text = await readFile(path.join(SRC, "profiles", `${id}.${b}.md`), "utf8");
       const start = text.indexOf("\n**Builders** (");
       const end = text.indexOf("\n### THE COUNCIL\n");
       assert.ok(start > 0 && end > start);
@@ -548,13 +698,13 @@ test("install and update stop before writing when cheapGPT is installed", async 
   const other = await tempDir();
   try {
     await mkdir(path.join(dir, ".cheapgpt"), { recursive: true });
-    await writeFile(path.join(dir, ".cheapgpt", "state.json"), JSON.stringify({ profile: "cheap", instructionFile: "CLAUDE.md", codexPermission: true }));
+    await writeFile(path.join(dir, ".cheapgpt", "state.json"), JSON.stringify({ profile: "cheap", instructionFile: "AGENTS.md", codexPermission: false }));
     await assert.rejects(() => cli(dir, ["install", "--profile", "town"]), /cheapGPT is installed in this project[\s\S]*--builders cheap/);
     assert.equal(existsSync(path.join(dir, ".cloop")), false);
-    assert.equal(existsSync(path.join(dir, "CLAUDE.md")), false);
+    assert.equal(existsSync(path.join(dir, "AGENTS.md")), false);
     await cli(other, ["install", "--profile", "town"]);
-    const before = await readFile(path.join(other, "CLAUDE.md"), "utf8");
-    await writeFile(path.join(other, "CLAUDE.md"), `${before}\n<!-- cheapgpt:managed:start -->\nx\n<!-- cheapgpt:managed:end -->\n`);
+    const before = await readFile(path.join(other, "AGENTS.md"), "utf8");
+    await writeFile(path.join(other, "AGENTS.md"), `${before}\n<!-- cheapgpt:managed:start -->\nx\n<!-- cheapgpt:managed:end -->\n`);
     await assert.rejects(() => cli(other, ["update"]), /cheapGPT is installed in this project/);
     const doctor = await cli(other, ["doctor"]);
     assert.ok(doctor.issues.some((issue) => /cheapGPT is installed here too/.test(issue)));
@@ -588,21 +738,17 @@ test("the turn hook sends the root to the flow tool's status, on every turn and 
   assert.doesNotMatch(block, /cheapGPT/);
 });
 
-test("compact recovery re-reads the policy unconditionally", async () => {
-  const hook = await readFile(HOOK, "utf8");
-  assert.match(hook, /re-read it from \$\{file\} now, before any other action, even if it appears to be in context/);
-  assert.doesNotMatch(hook, /if it is absent from context/);
-});
-
-test("main install keeps a codex exec permission that predates cLoop", async () => {
+test("repeated updates keep the multi-agent table that install created", async () => {
   const dir = await tempDir();
   try {
-    await mkdir(path.join(dir, ".claude"), { recursive: true });
-    await writeFile(path.join(dir, ".claude", "settings.json"), JSON.stringify({ permissions: { allow: ["Bash(codex exec:*)"] } }, null, 2));
     await cli(dir, ["install", "--profile", "town"]);
-    await cli(dir, ["uninstall"]);
-    const s = JSON.parse(await readFile(path.join(dir, ".claude", "settings.json"), "utf8"));
-    assert.ok(s.permissions.allow.includes("Bash(codex exec:*)"));
+    for (let i = 0; i < 3; i += 1) {
+      await cli(dir, ["update"]);
+      const text = await readFile(path.join(dir, ".codex", "config.toml"), "utf8");
+      assert.equal(text.split("[features.multi_agent_v2]").length - 1, 1, `update ${i + 1} lost or duplicated the table`);
+      assert.match(text, /expose_spawn_agent_model_overrides = true/);
+      assert.equal((await cli(dir, ["doctor"])).ok, true);
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

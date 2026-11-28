@@ -59,7 +59,7 @@ The user fixes the model hierarchy for the task; it does not change during it.
 - The two members are different models from different labs: their findings complement each other.
 - `node .cloop/cloop.mjs call <judge|member|explorer|dueler>` creates the call's id, worktree and packet, opened with the role's card; append the assignment. Member A: Claude Code's native `Agent` tool, never as a fork (a fork runs on your model), with `model` `opus` for Opus 5.5 and `effort` xhigh, prompted "Read <packet path> and follow it."; save its final reply verbatim as `cloop/runs/<call-id>/out.md`. Member B and explorers: `codex exec -m <model> -c model_reasoning_effort=<effort> -s workspace-write -C "<its worktree>" --json -o "$REPO/cloop/runs/<call-id>/out.md" "Read <packet path> and follow it." < /dev/null > "$REPO/cloop/runs/<call-id>/events.jsonl"`, with the model and effort from the table, run as background jobs and waited for in this turn; their model and effort are confirmed from `events.jsonl`. Before the first `codex exec`, confirm Codex is logged in and that no Codex instruction file it loads from the worktree up to the filesystem root holds an orchestration policy.
 
-**Builders** (`--builders cheap-100`: cheapGPT 1.10.3, `exp` edition; the BUILDERS section applies):
+**Builders** (`--builders cheap-100`: cheapGPT 1.10.4, `exp` edition; the BUILDERS section applies):
 
 | Builder | Model | Writes |
 |---|---|---|

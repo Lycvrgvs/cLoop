@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const VERSION = '1.2.3';
+const VERSION = '1.2.4';
 const ROOT = process.cwd();
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIR = path.join(ROOT, 'cloop');
@@ -55,14 +55,15 @@ function load() {
   if (!fs.existsSync(F.state)) die(`no task here: ${CMD} init <FOCUSED|FULL> <slug> "<reason>" (DIRECT uses no tool)`);
   const s = JSON.parse(fs.readFileSync(F.state, 'utf8'));
   if (!FLOW[s.state]) die(`this task was started by cLoop 1.1.0 or earlier (state ${s.state}): finish it with that version, or ${CMD} clean --force and start again`);
-  if (s.version !== VERSION) { // a task saved by an earlier version continues; the prevent is owed from its next state entry
-    const from = s.version;
+  if (s.version !== VERSION) { // a task saved by an earlier version continues; before 1.2.3 the prevent was not owed in every state, so it is owed from the next state entry
+    const from = s.version, older = (x, y) => { const [p, q] = [x, y].map((v) => String(v || '0').split('.').map(Number)); for (let i = 0; i < 3; i++) if ((p[i] || 0) !== (q[i] || 0)) return (p[i] || 0) < (q[i] || 0); return false; };
     if ('stage' in s) { // 1.2.0: a core and a non-core stage become one features stage
       if (s.prevent) s.entry.prevent = s.prevent;
       for (const k of ['stage', 'prevent']) delete s[k];
       s.entry.block = null; s.blocks = [];
     }
-    s.entry.legacy = true; s.version = VERSION;
+    if (older(from, '1.2.3')) s.entry.legacy = true;
+    s.version = VERSION;
     save(s, { ev: 'migrate', from, to: VERSION });
   }
   return s;

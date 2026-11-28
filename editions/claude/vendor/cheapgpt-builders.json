@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "edition": "claude",
+  "source": {
+    "package": "cheapGPT",
+    "version": "1.10.4",
+    "edition": "claude",
+    "commit": "22efe47a9d05eb6c1a99892257bc04d4b43899c3"
+  },
+  "profiles": {
+    "cheap": {
+      "dynamic": {
+        "model": "Sonnet 5.5",
+        "effort": "medium",
+        "alias": "sonnet"
+      },
+      "mechanical": {
+        "model": "Haiku 5.5",
+        "effort": "xhigh",
+        "alias": "haiku"
+      }
+    },
+    "cheap-100": {
+      "dynamic": {
+        "model": "Sonnet 5.5",
+        "effort": "xhigh",
+        "alias": "sonnet"
+      },
+      "mechanical": {
+        "model": "Haiku 5.5",
+        "effort": "xhigh",
+        "alias": "haiku"
+      }
+    }
+  }
+}

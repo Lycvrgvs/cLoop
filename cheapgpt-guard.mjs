@@ -5,8 +5,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-// cLoop edition -> the cheapGPT edition with the same root and invocation.
-export const CHEAPGPT_EDITION = { main: "exp", codex: "main", claude: "claude-edition" };
+// Each cLoop edition pairs with the cheapGPT edition of the same name (same root and invocation).
 const MARKER = "cheapgpt:managed";
 const BUILDER_PROFILES = ["cheap", "cheap-100"];
 
@@ -61,13 +60,12 @@ export async function detectCheapgpt(projectRoot) {
 // The cheapGPT edition that wrote this state, when the state says enough to tell.
 export function cheapgptEditionOf(state) {
   if (!state || typeof state !== "object") return null;
-  if (state.instructionFile === "AGENTS.md") return "main";
-  if (state.instructionFile === "CLAUDE.md") return state.codexPermission ? "exp" : "claude-edition";
+  if (state.instructionFile === "AGENTS.md") return "codex";
+  if (state.instructionFile === "CLAUDE.md") return state.codexPermission ? "exp" : "claude";
   return null;
 }
 
 export function cheapgptMessage({ found, state }, cloopEdition) {
-  const pair = CHEAPGPT_EDITION[cloopEdition];
   const edition = cheapgptEditionOf(state);
   const profile = state && typeof state.profile === "string" ? state.profile : null;
   const lines = [
@@ -78,10 +76,10 @@ export function cheapgptMessage({ found, state }, cloopEdition) {
   } else {
     lines.push("- Keep cLoop: first remove cheapGPT with its own installer, from the edition that installed it: node /path/to/cheapGPT/install.mjs uninstall --project .");
   }
-  if (edition === pair && BUILDER_PROFILES.includes(profile)) {
+  if (edition === cloopEdition && BUILDER_PROFILES.includes(profile)) {
     lines.push(`  then rerun this command with --builders ${profile} to keep cheapGPT's ${profile} builders inside cLoop.`);
   } else {
-    lines.push(`  cheapGPT's builders are available inside cLoop with --builders cheap|cheap-100 (this ${cloopEdition} edition takes them from cheapGPT ${pair}); ask the user which, if any.`);
+    lines.push(`  cheapGPT's builders are available inside cLoop with --builders cheap|cheap-100 (this ${cloopEdition} edition takes them from cheapGPT ${cloopEdition}); ask the user which, if any.`);
   }
   lines.push("- Keep cheapGPT alone: do not install cLoop here.");
   return lines.join("\n");
